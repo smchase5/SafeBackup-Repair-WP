@@ -23,6 +23,18 @@ class SBWP_REST_API
             'permission_callback' => array($this, 'check_permission'),
         ));
 
+        register_rest_route('sbwp/v1', '/backups/(?P<id>\d+)', array(
+            'methods' => 'DELETE',
+            'callback' => array($this, 'delete_backup'),
+            'permission_callback' => array($this, 'check_permission'),
+        ));
+
+        register_rest_route('sbwp/v1', '/backup/progress', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_backup_progress'),
+            'permission_callback' => array($this, 'check_permission'),
+        ));
+
         register_rest_route('sbwp/v1', '/settings', array(
             'methods' => 'GET',
             'callback' => array($this, 'get_settings'),
@@ -70,14 +82,47 @@ class SBWP_REST_API
     {
         require_once plugin_dir_path(dirname(__FILE__)) . 'includes/class-sbwp-backup-engine.php';
         $engine = new SBWP_Backup_Engine();
+        $params = $request->get_json_params();
+        $resume = isset($params['resume']) ? $params['resume'] : false;
 
-        $result = $engine->create_backup('full');
+        try {
+            $result = $engine->create_backup('full', $resume);
+        } catch (Throwable $e) {
+            error_log("SBWP Fatal Error: " . $e->getMessage());
+            return new WP_Error('fatal_error', $e->getMessage());
+        } catch (Exception $e) { // Legacy catch
+            error_log("SBWP Exception: " . $e->getMessage());
+            return new WP_Error('exception', $e->getMessage());
+        }
+
+        if (is_wp_error($result)) {
+            error_log("SBWP REST Error: " . $result->get_error_message());
+            return $result;
+        }
+
+        error_log("SBWP REST Success: Status=" . (isset($result['status']) ? $result['status'] : 'Unknown'));
+        // Force explicit JSON response to avoid WP REST API serialization issues
+        if (ob_get_length())
+            ob_clean();
+        header('Content-Type: application/json');
+        header('Cache-Control: no-cache, no-store, must-revalidate'); // Prevent caching
+        echo json_encode($result);
+        die();
+    }
+
+    public function delete_backup($request)
+    {
+        $id = $request['id'];
+        require_once plugin_dir_path(dirname(__FILE__)) . 'includes/class-sbwp-backup-engine.php';
+        $engine = new SBWP_Backup_Engine();
+
+        $result = $engine->delete_backup($id);
 
         if (is_wp_error($result)) {
             return $result;
         }
 
-        return rest_ensure_response(array('success' => true, 'message' => 'Backup created successfully.'));
+        return rest_ensure_response(array('success' => true, 'id' => $id, 'message' => 'Backup deleted.'));
     }
 
     public function get_settings()
@@ -102,6 +147,16 @@ class SBWP_REST_API
         update_option('sbwp_settings', $settings);
 
         return rest_ensure_response(array('success' => true, 'settings' => $settings));
+    }
+
+    public function get_backup_progress()
+    {
+        wp_cache_delete('sbwp_backup_progress', 'options'); // Force fresh read
+        $progress = get_option('sbwp_backup_progress');
+        if (!$progress) {
+            return rest_ensure_response(array('percent' => 0, 'message' => 'Idle'));
+        }
+        return rest_ensure_response($progress);
     }
 
     private function format_size($bytes)

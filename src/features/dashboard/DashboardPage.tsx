@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { ShieldCheck, HardDrive, RefreshCw, Loader2, ArrowUpCircle } from "lucide-react"
-import { fetchStats, createBackup, type Stats } from "@/lib/api"
+import { ShieldCheck, HardDrive, RefreshCw, Loader2, ArrowUpCircle, Database, Archive, CheckCircle, Search } from "lucide-react"
+import { Progress } from "@/components/ui/progress"
+import { fetchStats, createBackup, fetchProgress, type Stats } from "@/lib/api"
 import { useToast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
-import { CloudSettingsDialog } from "./CloudSettingsDialog"
 import { SafeUpdateDialog } from "./SafeUpdateDialog"
 import { ConflictScannerDialog } from "./ConflictScannerDialog"
+import { BackupsList } from "./BackupsList"
 
 interface DashboardPageProps {
     onNavigate: (view: 'dashboard' | 'settings' | 'schedules') => void
@@ -17,9 +18,11 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     const [stats, setStats] = useState<Stats | null>(null)
     const [loading, setLoading] = useState(true)
     const [backingUp, setBackingUp] = useState(false)
-    const [showCloudSettings, setShowCloudSettings] = useState(false)
     const [showSafeUpdate, setShowSafeUpdate] = useState(false)
     const [showScanner, setShowScanner] = useState(false)
+    const [refreshBackups, setRefreshBackups] = useState(0)
+    const [progress, setProgress] = useState(0)
+    const [progressMsg, setProgressMsg] = useState('')
     const { toast } = useToast()
 
     const loadStats = async () => {
@@ -37,16 +40,49 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
         loadStats()
     }, [])
 
+    useEffect(() => {
+        let interval: NodeJS.Timeout
+        if (backingUp) {
+            interval = setInterval(async () => {
+                try {
+                    const p = await fetchProgress()
+                    setProgress(p.percent)
+                    setProgressMsg(p.message)
+                } catch { }
+            }, 1000)
+        } else {
+            setProgress(0)
+            setProgressMsg('')
+        }
+        return () => clearInterval(interval)
+    }, [backingUp])
+
     const handleBackup = async () => {
         setBackingUp(true)
+        setProgress(1)
         try {
-            await createBackup()
+            let result = await createBackup(false)
+
+            if (result.code) throw new Error(result.message); // Handle initial error
+
+            while (result.status === 'processing') {
+                // If provided in response, use it (optional, but polling is main source)
+                if (result.percent) setProgress(result.percent)
+                if (result.message) setProgressMsg(result.message)
+
+                // Resume
+                result = await createBackup(true)
+                if (result.code) throw new Error(result.message); // Handle resume error
+            }
+
             toast({
                 title: "Backup Complete",
                 description: "Your local backup was created successfully.",
             })
             await loadStats()
+            setRefreshBackups(prev => prev + 1)
         } catch (error) {
+            console.error(error)
             toast({
                 title: "Backup Failed",
                 description: "There was an error creating your backup.",
@@ -64,7 +100,6 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     return (
         <div className="space-y-6">
             <Toaster />
-            <CloudSettingsDialog open={showCloudSettings} onOpenChange={setShowCloudSettings} />
             <SafeUpdateDialog open={showSafeUpdate} onOpenChange={setShowSafeUpdate} />
             <ConflictScannerDialog open={showScanner} onOpenChange={setShowScanner} />
 
@@ -104,70 +139,36 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
                         <CardTitle className="text-sm font-medium">Quick Actions</CardTitle>
                         <RefreshCw className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
-                    <CardContent className="flex gap-2">
-                        <Button size="sm" onClick={handleBackup} disabled={backingUp}>
-                            {backingUp ? (
-                                <>
-                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                    Backing Up...
-                                </>
-                            ) : (
-                                'Backup Now'
-                            )}
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => onNavigate('settings')}>Settings</Button>
-                    </CardContent>
-                </Card>
-
-                <Card className={window.sbwpData.isPro ? "border-emerald-500/50 bg-emerald-500/5" : "opacity-80"}>
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">
-                            Cloud Storage
-                        </CardTitle>
-                        {window.sbwpData.isPro ? (
-                            <span className="text-[10px] bg-emerald-500/20 text-emerald-500 px-2 py-0.5 rounded-full font-bold">PRO ACTIVE</span>
+                    <CardContent className="flex flex-col gap-2">
+                        {backingUp ? (
+                            <div className="space-y-2 w-full">
+                                <div className="flex justify-between text-xs text-muted-foreground items-center">
+                                    <div className="flex items-center gap-2">
+                                        {(() => {
+                                            const msg = (progressMsg || '').toLowerCase();
+                                            if (progress >= 100) return <CheckCircle className="h-4 w-4 text-emerald-500" />;
+                                            if (msg.includes('exporting')) return <Database className="h-4 w-4 text-blue-500 animate-pulse" />;
+                                            if (msg.includes('scanning')) return <Search className="h-4 w-4 text-yellow-500 animate-pulse" />;
+                                            if (msg.includes('archiving')) return <Archive className="h-4 w-4 text-orange-500 animate-pulse" />;
+                                            if (msg.includes('finalizing')) return <HardDrive className="h-4 w-4 text-purple-500 animate-pulse" />;
+                                            return <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />;
+                                        })()}
+                                        <span>{progressMsg || 'Starting...'}</span>
+                                    </div>
+                                    <span>{progress}%</span>
+                                </div>
+                                <Progress value={progress} className="h-2" />
+                            </div>
                         ) : (
-                            <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold">FREE</span>
-                        )}
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold">
-                            {window.sbwpData.isPro ? 'Not Connected' : 'Locked'}
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-1">
-                            {window.sbwpData.isPro
-                                ? 'Configure Google Drive / S3'
-                                : 'Upgrade to enable Cloud Backups'}
-                        </p>
-                        {window.sbwpData.isPro ? (
-                            <Button size="sm" variant="outline" className="mt-4 w-full h-8 text-xs" onClick={() => setShowCloudSettings(true)}>
-                                Configure
-                            </Button>
-                        ) : (
-                            <Button size="sm" variant="secondary" className="mt-4 w-full h-8 text-xs">
-                                Get Pro
-                            </Button>
+                            <div className="flex gap-2">
+                                <Button size="sm" onClick={handleBackup}>
+                                    Backup Now
+                                </Button>
+                                <Button size="sm" variant="outline" onClick={() => onNavigate('settings')}>Settings</Button>
+                            </div>
                         )}
                     </CardContent>
                 </Card>
-
-                {window.sbwpData.isPro && (
-                    <Card className="border-emerald-500/50 bg-emerald-500/5">
-                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                            <CardTitle className="text-sm font-medium">Scheduled Backups</CardTitle>
-                            <span className="text-[10px] bg-emerald-500/20 text-emerald-500 px-2 py-0.5 rounded-full font-bold">PRO ACTIVE</span>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="text-2xl font-bold">Manage</div>
-                            <p className="text-xs text-muted-foreground mt-1">
-                                Automated daily/weekly backups
-                            </p>
-                            <Button size="sm" variant="outline" className="mt-4 w-full h-8 text-xs" onClick={() => onNavigate('schedules')}>
-                                Configure Schedules
-                            </Button>
-                        </CardContent>
-                    </Card>
-                )}
 
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -183,7 +184,6 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
                             if (window.sbwpData.isPro) {
                                 setShowSafeUpdate(true)
                             } else {
-                                // Free fallback: just redirect
                                 window.location.href = '/wp-admin/update-core.php'
                             }
                         }}>
@@ -214,27 +214,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
                 </Card>
             </div>
 
-            <Card className="col-span-3">
-                <CardHeader>
-                    <CardTitle>Welcome to SafeBackup</CardTitle>
-                    <CardDescription>
-                        {stats?.count === 0
-                            ? "Your site is currently unprotected. Create a backup to get started."
-                            : "Your site is protected. You can create a new backup at any time."
-                        }
-                    </CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <div className="rounded-md bg-muted p-4">
-                        <p className="text-sm">
-                            {stats?.count === 0
-                                ? "Ready to protect your site? Click the \"Backup Now\" button above to create your first local backup."
-                                : `You have ${stats?.count} local backups available.`
-                            }
-                        </p>
-                    </div>
-                </CardContent>
-            </Card>
+            <BackupsList refreshTrigger={refreshBackups} />
         </div>
     )
 }

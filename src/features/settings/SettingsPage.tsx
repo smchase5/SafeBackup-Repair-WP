@@ -7,14 +7,18 @@ import { useToast } from "@/components/ui/use-toast"
 import { getSettings, saveSettings, type Settings } from "@/lib/api"
 import { Loader2, ArrowLeft } from "lucide-react"
 
+import { CloudSettingsDialog } from "../dashboard/CloudSettingsDialog"
+
 interface SettingsPageProps {
     onBack: () => void
+    onNavigate: (view: 'dashboard' | 'settings' | 'schedules') => void
 }
 
-export function SettingsPage({ onBack }: SettingsPageProps) {
+export function SettingsPage({ onBack, onNavigate }: SettingsPageProps) {
     const [settings, setSettings] = useState<Settings>({ retention_limit: 5 })
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
+    const [showCloudSettings, setShowCloudSettings] = useState(false)
     const { toast } = useToast()
 
     useEffect(() => {
@@ -49,10 +53,14 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
 
     return (
         <div className="space-y-6 max-w-2xl">
+            <CloudSettingsDialog open={showCloudSettings} onOpenChange={setShowCloudSettings} />
+
             <Button variant="ghost" className="pl-0 gap-2" onClick={onBack}>
                 <ArrowLeft className="h-4 w-4" />
                 Back to Dashboard
             </Button>
+
+            <h2 className="text-xl font-semibold tracking-tight">Configuration</h2>
 
             <Card>
                 <CardHeader>
@@ -81,6 +89,58 @@ export function SettingsPage({ onBack }: SettingsPageProps) {
                     </Button>
                 </CardContent>
             </Card>
+
+            <div className="grid gap-4 md:grid-cols-2">
+                <Card className={window.sbwpData.isPro ? "border-emerald-500/50 bg-emerald-500/5" : "opacity-80"}>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">
+                            Cloud Storage
+                        </CardTitle>
+                        {window.sbwpData.isPro ? (
+                            <span className="text-[10px] bg-emerald-500/20 text-emerald-500 px-2 py-0.5 rounded-full font-bold">PRO ACTIVE</span>
+                        ) : (
+                            <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold">FREE</span>
+                        )}
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold">
+                            {window.sbwpData.isPro ? 'Configure' : 'Locked'}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                            {window.sbwpData.isPro
+                                ? 'Connect to Google Drive / S3'
+                                : 'Upgrade to enable Cloud Backups'}
+                        </p>
+                        {window.sbwpData.isPro ? (
+                            <Button size="sm" variant="outline" className="mt-4 w-full h-8 text-xs" onClick={() => setShowCloudSettings(true)}>
+                                Configure Cloud
+                            </Button>
+                        ) : (
+                            <Button size="sm" variant="secondary" className="mt-4 w-full h-8 text-xs">
+                                Get Pro
+                            </Button>
+                        )}
+                    </CardContent>
+                </Card>
+
+                {window.sbwpData.isPro && (
+                    <Card className="border-emerald-500/50 bg-emerald-500/5">
+                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                            <CardTitle className="text-sm font-medium">Scheduled Backups</CardTitle>
+                            <span className="text-[10px] bg-emerald-500/20 text-emerald-500 px-2 py-0.5 rounded-full font-bold">PRO ACTIVE</span>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="text-2xl font-bold">Manage</div>
+                            <p className="text-xs text-muted-foreground mt-1">
+                                Automated daily/weekly backups
+                            </p>
+                            <Button size="sm" variant="outline" className="mt-4 w-full h-8 text-xs" onClick={() => onNavigate('schedules')}>
+                                Configure Schedules
+                            </Button>
+                        </CardContent>
+                    </Card>
+                )}
+            </div>
         </div>
     )
 }

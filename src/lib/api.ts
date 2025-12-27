@@ -21,7 +21,7 @@ export interface Backup {
     created_at: string;
     type: string;
     storage_location: string;
-    size_bytes: number;
+    size_bytes: string;
     status: string;
 }
 
@@ -35,16 +35,38 @@ export async function fetchStats(): Promise<Stats> {
     return response.json();
 }
 
-export async function createBackup(): Promise<any> {
+export async function fetchBackups(): Promise<Backup[]> {
     const response = await fetch(`${window.sbwpData.restUrl}/backups`, {
-        method: 'POST',
-        headers: {
-            'X-WP-Nonce': window.sbwpData.nonce,
-            'Content-Type': 'application/json'
-        }
+        headers: { 'X-WP-Nonce': window.sbwpData.nonce }
     });
-    if (!response.ok) throw new Error('Failed to create backup');
+    if (!response.ok) throw new Error('Failed to fetch backups');
     return response.json();
+}
+
+export async function deleteBackup(id: string): Promise<any> {
+    const response = await fetch(`${window.sbwpData.restUrl}/backups/${id}`, {
+        method: 'DELETE',
+        headers: { 'X-WP-Nonce': window.sbwpData.nonce }
+    });
+    if (!response.ok) throw new Error('Failed to delete backup');
+    return response.json();
+}
+
+
+export async function fetchProgress(): Promise<{ percent: number, message: string }> {
+    try {
+        const response = await fetch(`${window.sbwpData.restUrl}/backup/progress`, {
+            headers: { 'X-WP-Nonce': window.sbwpData.nonce }
+        });
+        if (!response.ok) return { percent: 0, message: 'Idle' };
+
+        const text = await response.text();
+        if (!text) return { percent: 0, message: 'Idle' };
+
+        return JSON.parse(text);
+    } catch (e) {
+        return { percent: 0, message: 'Idle' };
+    }
 }
 
 export interface CloudProvider {
@@ -104,4 +126,30 @@ export async function saveSettings(settings: Settings): Promise<any> {
     });
     if (!response.ok) throw new Error('Failed to save settings');
     return response.json();
+}
+
+export async function createBackup(resume = false): Promise<any> {
+    const response = await fetch(`${window.sbwpData.restUrl}/backups`, {
+        method: 'POST',
+        headers: {
+            'X-WP-Nonce': window.sbwpData.nonce,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ resume })
+    });
+
+    const text = await response.text();
+    if (!text) {
+        console.error(`SBWP Fetch Error: Empty response. Status: ${response.status} ${response.statusText}`);
+        throw new Error(`Empty response from server (Status ${response.status})`);
+    }
+
+    try {
+        const data = JSON.parse(text);
+        if (!response.ok) throw new Error(data.message || 'Failed to create backup');
+        return data;
+    } catch (e) {
+        console.error('JSON Parse Error:', text);
+        throw new Error('Invalid server response');
+    }
 }

@@ -21,7 +21,7 @@ function App() {
                 </div>
 
                 {view === 'dashboard' && <DashboardPage onNavigate={setView} />}
-                {view === 'settings' && <SettingsPage onBack={() => setView('dashboard')} />}
+                {view === 'settings' && <SettingsPage onBack={() => setView('dashboard')} onNavigate={setView} />}
                 {view === 'schedules' && <SchedulesManager onBack={() => setView('dashboard')} />}
             </div>
         </div>
