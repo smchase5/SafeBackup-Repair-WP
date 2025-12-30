@@ -67,7 +67,7 @@ class SBWP_Admin_UI
 
         // Localize script for React to use
         wp_localize_script('sbwp-admin-script', 'sbwpData', array(
-            'root' => '#sbwp-admin-root',
+            'root' => site_url('/'),
             'nonce' => wp_create_nonce('wp_rest'),
             'restUrl' => get_rest_url(null, 'sbwp/v1'),
             'isPro' => apply_filters('sbwp_is_pro_active', false),

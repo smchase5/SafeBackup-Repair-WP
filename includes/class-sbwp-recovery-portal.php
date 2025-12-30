@@ -2,10 +2,16 @@
 
 class SBWP_Recovery_Portal
 {
+    private $key_option = 'sbwp_recovery_key';
+    private $pin_option = 'sbwp_recovery_pin';
 
     public function init()
     {
         add_action('init', array($this, 'check_recovery_mode'));
+        add_action('init', array($this, 'ensure_recovery_key'));
+        add_action('rest_api_init', array($this, 'register_rest_routes'));
+
+
         add_action('wp_ajax_sbwp_recovery_restore', array($this, 'ajax_restore'));
         add_action('wp_ajax_nopriv_sbwp_recovery_restore', array($this, 'ajax_restore'));
 
@@ -19,23 +25,331 @@ class SBWP_Recovery_Portal
         add_action('wp_ajax_nopriv_sbwp_recovery_get_log', array($this, 'ajax_get_log'));
     }
 
+    /**
+     * Register REST API routes for recovery settings
+     */
+    public function register_rest_routes()
+    {
+        register_rest_route('sbwp/v1', '/recovery/settings', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_recovery_settings'),
+            'permission_callback' => function () {
+                return current_user_can('manage_options');
+            }
+        ));
+
+        register_rest_route('sbwp/v1', '/recovery/settings', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'save_recovery_settings'),
+            'permission_callback' => function () {
+                return current_user_can('manage_options');
+            }
+        ));
+
+        register_rest_route('sbwp/v1', '/recovery/regenerate-key', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'regenerate_key'),
+            'permission_callback' => function () {
+                return current_user_can('manage_options');
+            }
+        ));
+
+        register_rest_route('sbwp/v1', '/crash-status', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_crash_status'),
+            'permission_callback' => function () {
+                return current_user_can('manage_options');
+            }
+        ));
+    }
+
+    /**
+     * Ensure a recovery key exists - sync between database and file
+     */
+    public function ensure_recovery_key()
+    {
+        $key_file = SBWP_PLUGIN_DIR . '.sbwp-recovery-key';
+
+        // Check if file already has a key
+        if (file_exists($key_file)) {
+            $file_key = trim(file_get_contents($key_file));
+            if (!empty($file_key)) {
+                // Sync to database for REST API access
+                if (get_option($this->key_option) !== $file_key) {
+                    update_option($this->key_option, $file_key);
+                }
+                return;
+            }
+        }
+
+        // Generate new key if none exists
+        $key = bin2hex(random_bytes(16));
+
+        // Save to file (for standalone recovery.php)
+        file_put_contents($key_file, $key);
+        @chmod($key_file, 0600);
+
+        // Save to database (for WordPress-based access)
+        update_option($this->key_option, $key);
+    }
+
+    /**
+     * Get recovery key (from file first, fallback to database)
+     */
+    public function get_recovery_key()
+    {
+        $key_file = SBWP_PLUGIN_DIR . '.sbwp-recovery-key';
+        if (file_exists($key_file)) {
+            $key = trim(file_get_contents($key_file));
+            if (!empty($key)) {
+                return $key;
+            }
+        }
+        return get_option($this->key_option, '');
+    }
+
+    /**
+     * Get recovery URL - points to standalone recovery.php
+     */
+    public function get_recovery_url()
+    {
+        $key = $this->get_recovery_key();
+        // Point to standalone recovery.php file
+        return plugins_url('recovery.php', SBWP_PLUGIN_DIR . 'x') . '?key=' . $key;
+    }
+
+    /**
+     * REST: Get recovery settings
+     */
+    public function get_recovery_settings()
+    {
+        $pin = get_option($this->pin_option, '');
+
+        return rest_ensure_response(array(
+            'url' => $this->get_recovery_url(),
+            'key' => $this->get_recovery_key(),
+            'has_pin' => !empty($pin),
+        ));
+    }
+
+    /**
+     * REST: Save recovery settings (PIN)
+     */
+    public function save_recovery_settings($request)
+    {
+        $params = $request->get_json_params();
+
+        if (isset($params['pin'])) {
+            $pin = sanitize_text_field($params['pin']);
+            $pin_file = SBWP_PLUGIN_DIR . '.sbwp-recovery-pin';
+
+            if (empty($pin)) {
+                delete_option($this->pin_option);
+                if (file_exists($pin_file)) {
+                    @unlink($pin_file);
+                }
+            } else {
+                // DB: WP Hash
+                update_option($this->pin_option, wp_hash_password($pin));
+
+                // File: PHP Standard Hash (for standalone recovery.php)
+                file_put_contents($pin_file, password_hash($pin, PASSWORD_DEFAULT));
+                @chmod($pin_file, 0600);
+            }
+        }
+
+        return $this->get_recovery_settings();
+    }
+
+    /**
+     * REST: Regenerate recovery key
+     */
+    public function regenerate_key()
+    {
+        $key = wp_generate_password(32, false);
+        update_option($this->key_option, $key);
+
+        return $this->get_recovery_settings();
+    }
+
+    /**
+     * REST: Get crash status (checks for recent errors)
+     */
+    public function get_crash_status()
+    {
+        $has_crash = false;
+        $error_summary = '';
+
+        $log_path = WP_CONTENT_DIR . '/debug.log';
+
+        if (file_exists($log_path)) {
+            $file_modified = filemtime($log_path);
+            $five_mins_ago = time() - (5 * 60);
+
+            // Check if log was modified in last 5 minutes
+            if ($file_modified > $five_mins_ago) {
+                // Read last few lines looking for fatal errors
+                $lines = $this->tail_file($log_path, 50);
+                $content = implode("\n", $lines);
+
+                if (
+                    stripos($content, 'Fatal error') !== false ||
+                    stripos($content, 'Parse error') !== false
+                ) {
+                    $has_crash = true;
+
+                    // Extract first error line for summary
+                    foreach ($lines as $line) {
+                        if (
+                            stripos($line, 'Fatal error') !== false ||
+                            stripos($line, 'Parse error') !== false
+                        ) {
+                            $error_summary = trim($line);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        return rest_ensure_response(array(
+            'has_crash' => $has_crash,
+            'error_summary' => $error_summary,
+            'recovery_url' => $this->get_recovery_url(),
+        ));
+    }
+
     public function check_recovery_mode()
     {
-        if (isset($_GET['sbwp_recovery'])) {
+        if (!isset($_GET['sbwp_recovery'])) {
+            return;
+        }
 
-            // Simple auth check for now: user must be admin or have a valid token (TODO: Token)
-            // For Phase 3 MVP, we rely on logged-in cookie or we could implement a simple PIN
-            if (!current_user_can('manage_options')) {
-                // In a real crash scenario, cookies might not work effectively or user is logged out.
-                // For MVP, lets assume we need a token or login. 
-                // For now, let's just show a login form if not logged in? 
-                // To keep it simple for this step: Require Admin Cookie.
-                wp_die('Access Denied. Please log in as administrator.');
+        // Check authentication: either admin login OR valid key
+        $is_authenticated = false;
+
+        // Method 1: Admin is logged in
+        if (current_user_can('manage_options')) {
+            $is_authenticated = true;
+        }
+
+        // Method 2: Valid recovery key provided
+        $provided_key = isset($_GET['key']) ? sanitize_text_field($_GET['key']) : '';
+        $stored_key = $this->get_recovery_key();
+
+        if (!empty($provided_key) && !empty($stored_key) && hash_equals($stored_key, $provided_key)) {
+            $is_authenticated = true;
+        }
+
+        if (!$is_authenticated) {
+            wp_die('Access Denied. Invalid recovery key or not logged in as administrator.', 'SafeBackup Recovery', array('response' => 403));
+        }
+
+        // Check PIN if set
+        $stored_pin_hash = get_option($this->pin_option, '');
+        if (!empty($stored_pin_hash)) {
+            $provided_pin = isset($_GET['pin']) ? sanitize_text_field($_GET['pin']) : '';
+
+            if (empty($provided_pin)) {
+                // Show PIN form
+                $this->render_pin_form();
+                exit;
             }
 
-            $this->render_portal();
-            exit;
+            if (!wp_check_password($provided_pin, $stored_pin_hash)) {
+                wp_die('Invalid PIN.', 'SafeBackup Recovery', array('response' => 403));
+            }
         }
+
+        $this->render_portal();
+        exit;
+    }
+
+    private function render_pin_form()
+    {
+        ?>
+        <!DOCTYPE html>
+        <html lang="en">
+
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>SafeBackup Recovery - Enter PIN</title>
+            <style>
+                body {
+                    font-family: system-ui, -apple-system, sans-serif;
+                    background: #0f172a;
+                    color: #f1f5f9;
+                    min-height: 100vh;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    margin: 0;
+                }
+
+                .container {
+                    background: #1e293b;
+                    padding: 2rem;
+                    border-radius: 1rem;
+                    max-width: 400px;
+                    width: 90%;
+                }
+
+                h1 {
+                    margin: 0 0 0.5rem;
+                    font-size: 1.5rem;
+                }
+
+                p {
+                    color: #94a3b8;
+                    margin: 0 0 1.5rem;
+                    font-size: 0.875rem;
+                }
+
+                input {
+                    width: 100%;
+                    padding: 0.75rem;
+                    border: 1px solid #334155;
+                    border-radius: 0.5rem;
+                    background: #0f172a;
+                    color: #f1f5f9;
+                    font-size: 1rem;
+                    margin-bottom: 1rem;
+                    box-sizing: border-box;
+                }
+
+                button {
+                    width: 100%;
+                    padding: 0.75rem;
+                    background: #10b981;
+                    color: white;
+                    border: none;
+                    border-radius: 0.5rem;
+                    font-size: 1rem;
+                    cursor: pointer;
+                }
+
+                button:hover {
+                    background: #059669;
+                }
+            </style>
+        </head>
+
+        <body>
+            <div class="container">
+                <h1>🔒 Recovery Portal</h1>
+                <p>Enter your PIN to access the recovery portal.</p>
+                <form method="GET">
+                    <input type="hidden" name="sbwp_recovery" value="1">
+                    <input type="hidden" name="key" value="<?php echo esc_attr($_GET['key'] ?? ''); ?>">
+                    <input type="password" name="pin" placeholder="Enter PIN" autofocus>
+                    <button type="submit">Access Recovery Portal</button>
+                </form>
+            </div>
+        </body>
+
+        </html>
+        <?php
     }
 
     private function render_portal()

@@ -2,3 +2,13 @@ node_modules
 .DS_Store
 .env
 .vite
+
+# Runtime/credential files
+.sbwp-ai-key
+.sbwp-ai-undo-log
+.sbwp-crash.log
+.sbwp-recovery-key
+.sbwp-recovery-pin
+
+# Test plugins
+test-plugins/

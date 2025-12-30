@@ -29,6 +29,18 @@ class SBWP_REST_API
             'permission_callback' => array($this, 'check_permission'),
         ));
 
+        register_rest_route('sbwp/v1', '/backups/(?P<id>\d+)/restore', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'restore_backup'),
+            'permission_callback' => array($this, 'check_permission'),
+        ));
+
+        register_rest_route('sbwp/v1', '/backups/(?P<id>\d+)/contents', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'get_backup_contents'),
+            'permission_callback' => array($this, 'check_permission'),
+        ));
+
         register_rest_route('sbwp/v1', '/backup/progress', array(
             'methods' => 'GET',
             'callback' => array($this, 'get_backup_progress'),
@@ -125,10 +137,51 @@ class SBWP_REST_API
         return rest_ensure_response(array('success' => true, 'id' => $id, 'message' => 'Backup deleted.'));
     }
 
+    public function restore_backup($request)
+    {
+        $id = $request['id'];
+        $params = $request->get_json_params();
+        $items = isset($params['items']) ? $params['items'] : null;
+
+        require_once plugin_dir_path(dirname(__FILE__)) . 'includes/class-sbwp-restore-manager.php';
+        $manager = new SBWP_Restore_Manager();
+
+        if ($items) {
+            // Partial restore
+            $result = $manager->restore_specific_items($id, $items);
+        } else {
+            // Full restore
+            $result = $manager->restore_backup($id);
+        }
+
+        if (is_wp_error($result)) {
+            return $result;
+        }
+
+        return rest_ensure_response(array('success' => true, 'message' => 'Restore completed successfully.'));
+    }
+
+    public function get_backup_contents($request)
+    {
+        $id = $request['id'];
+        require_once plugin_dir_path(dirname(__FILE__)) . 'includes/class-sbwp-restore-manager.php';
+        $manager = new SBWP_Restore_Manager();
+
+        $result = $manager->get_backup_content_list($id);
+
+        if (is_wp_error($result)) {
+            return $result;
+        }
+
+        return rest_ensure_response($result);
+    }
+
     public function get_settings()
     {
         $settings = get_option('sbwp_settings', array(
             'retention_limit' => 5,
+            'alert_email' => '',
+            'alerts_enabled' => false,
         ));
         return rest_ensure_response($settings);
     }
@@ -138,10 +191,18 @@ class SBWP_REST_API
         $params = $request->get_json_params();
         $settings = get_option('sbwp_settings', array(
             'retention_limit' => 5,
+            'alert_email' => '',
+            'alerts_enabled' => false,
         ));
 
         if (isset($params['retention_limit'])) {
             $settings['retention_limit'] = absint($params['retention_limit']);
+        }
+        if (isset($params['alert_email'])) {
+            $settings['alert_email'] = sanitize_email($params['alert_email']);
+        }
+        if (isset($params['alerts_enabled'])) {
+            $settings['alerts_enabled'] = (bool) $params['alerts_enabled'];
         }
 
         update_option('sbwp_settings', $settings);

@@ -369,6 +369,10 @@ class SBWP_Backup_Engine
                 'notes' => ''
             )
         );
+        $backup_id = $wpdb->insert_id;
+
+        // Trigger Cloud Sync if configured
+        do_action('sbwp_backup_completed', $backup_id);
 
         $this->cleanup_old_backups();
     }

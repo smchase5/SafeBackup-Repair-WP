@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { ShieldCheck, HardDrive, RefreshCw, Loader2, ArrowUpCircle, Database, Archive, CheckCircle, Search } from "lucide-react"
+import { ShieldCheck, HardDrive, RefreshCw, Loader2, ArrowUpCircle, Database, Archive, CheckCircle, Search, AlertTriangle, ExternalLink } from "lucide-react"
 import { Progress } from "@/components/ui/progress"
-import { fetchStats, createBackup, fetchProgress, type Stats } from "@/lib/api"
+import { fetchStats, createBackup, fetchProgress, getCrashStatus, type Stats, type CrashStatus } from "@/lib/api"
 import { useToast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
 import { SafeUpdateDialog } from "./SafeUpdateDialog"
@@ -23,6 +23,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     const [refreshBackups, setRefreshBackups] = useState(0)
     const [progress, setProgress] = useState(0)
     const [progressMsg, setProgressMsg] = useState('')
+    const [crashStatus, setCrashStatus] = useState<CrashStatus | null>(null)
     const { toast } = useToast()
 
     const loadStats = async () => {
@@ -38,6 +39,8 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
 
     useEffect(() => {
         loadStats()
+        // Check for crash status
+        getCrashStatus().then(setCrashStatus).catch(console.error)
     }, [])
 
     useEffect(() => {
@@ -103,6 +106,31 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
             <SafeUpdateDialog open={showSafeUpdate} onOpenChange={setShowSafeUpdate} />
             <ConflictScannerDialog open={showScanner} onOpenChange={setShowScanner} />
 
+            {/* Crash Detection Banner */}
+            {crashStatus?.has_crash && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="bg-red-500/20 p-2 rounded-full">
+                            <AlertTriangle className="h-5 w-5 text-red-500" />
+                        </div>
+                        <div>
+                            <h3 className="font-medium text-red-800 dark:text-red-200">Site Issues Detected</h3>
+                            <p className="text-sm text-red-600 dark:text-red-400 truncate max-w-lg">
+                                Recent errors found in debug.log
+                            </p>
+                        </div>
+                    </div>
+                    <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => window.open(crashStatus.recovery_url, '_blank')}
+                    >
+                        <ExternalLink className="h-4 w-4 mr-2" />
+                        Open Recovery Portal
+                    </Button>
+                </div>
+            )}
+
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -136,8 +164,10 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
 
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Quick Actions</CardTitle>
-                        <RefreshCw className="h-4 w-4 text-muted-foreground" />
+                        <CardTitle className="text-sm font-medium">
+                            {backingUp ? 'Backing up...' : 'Quick Actions'}
+                        </CardTitle>
+                        <RefreshCw className={`h-4 w-4 text-muted-foreground ${backingUp ? 'animate-spin' : ''}`} />
                     </CardHeader>
                     <CardContent className="flex flex-col gap-2">
                         {backingUp ? (

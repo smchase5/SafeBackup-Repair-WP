@@ -52,6 +52,39 @@ export async function deleteBackup(id: string): Promise<any> {
     return response.json();
 }
 
+export interface BackupContent {
+    plugins: string[];
+    themes: string[];
+}
+
+export async function getBackupContents(id: number): Promise<BackupContent> {
+    const response = await fetch(`${window.sbwpData.restUrl}/backups/${id}/contents`, {
+        headers: {
+            'X-WP-Nonce': window.sbwpData.nonce
+        }
+    });
+
+    if (!response.ok) throw new Error('Failed to fetch backup contents');
+    return response.json();
+}
+
+export async function restoreBackup(id: number, items?: BackupContent): Promise<any> {
+    const response = await fetch(`${window.sbwpData.restUrl}/backups/${id}/restore`, {
+        method: 'POST',
+        headers: {
+            'X-WP-Nonce': window.sbwpData.nonce,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ items })
+    });
+
+    if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.message || 'Failed to restore backup');
+    }
+    return response.json();
+}
+
 
 export async function fetchProgress(): Promise<{ percent: number, message: string }> {
     try {
@@ -72,8 +105,10 @@ export async function fetchProgress(): Promise<{ percent: number, message: strin
 export interface CloudProvider {
     id: string;
     name: string;
-    icon: string;
+    icon?: string;
     connected: boolean;
+    user_info?: { email?: string; name?: string };
+    global_creds?: boolean;
 }
 
 export async function getCloudProviders(): Promise<CloudProvider[]> {
@@ -88,21 +123,42 @@ export async function getCloudProviders(): Promise<CloudProvider[]> {
     return response.json();
 }
 
-export async function connectProvider(providerId: string, action: 'connect' | 'disconnect'): Promise<any> {
-    const response = await fetch(`${window.sbwpData.restUrl}/cloud/connect`, {
+export async function connectProvider(provider_id: string, action: 'connect' | 'disconnect' | 'prepare', data?: any) {
+    const response = await fetch(`${window.sbwpData.root}wp-json/sbwp/v1/cloud/connect`, {
         method: 'POST',
         headers: {
-            'X-WP-Nonce': window.sbwpData.nonce,
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'X-WP-Nonce': window.sbwpData.nonce
         },
-        body: JSON.stringify({ provider_id: providerId, action })
+        body: JSON.stringify({ provider_id, action, ...data })
     });
-    if (!response.ok) throw new Error('Failed to update provider');
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.message || 'Failed to connect');
+    return result;
+}
+
+export async function getCloudSettings() {
+    const response = await fetch(`${window.sbwpData.root}wp-json/sbwp/v1/cloud/settings`, {
+        headers: { 'X-WP-Nonce': window.sbwpData.nonce }
+    });
     return response.json();
+}
+
+export async function updateCloudSettings(settings: { retention_count: number }) {
+    await fetch(`${window.sbwpData.root}wp-json/sbwp/v1/cloud/settings`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-WP-Nonce': window.sbwpData.nonce
+        },
+        body: JSON.stringify(settings)
+    });
 }
 
 export interface Settings {
     retention_limit: number;
+    alert_email?: string;
+    alerts_enabled?: boolean;
 }
 
 export async function getSettings(): Promise<Settings> {
@@ -152,4 +208,234 @@ export async function createBackup(resume = false): Promise<any> {
         console.error('JSON Parse Error:', text);
         throw new Error('Invalid server response');
     }
+}
+
+// ===== Safe Update API =====
+
+export interface AvailableUpdate {
+    file?: string;
+    slug?: string;
+    name: string;
+    current_version: string;
+    new_version: string;
+    requires_php?: string;
+    requires?: string;
+}
+
+export interface AvailableUpdates {
+    plugins: AvailableUpdate[];
+    themes: AvailableUpdate[];
+    core: { current_version: string; new_version: string } | null;
+}
+
+export interface SafeUpdateSession {
+    id: number;
+    clone_id: string;
+    status: 'queued' | 'running' | 'completed' | 'failed';
+    progress: {
+        message: string;
+        percent: number;
+        updated_at: number;
+    } | null;
+    items: {
+        plugins: string[];
+        themes: string[];
+        core: boolean;
+    };
+    result: SafeUpdateResult | null;
+    error_message: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface SafeUpdateResult {
+    summary: {
+        overall_status: 'safe' | 'risky' | 'unsafe';
+        php_version: string;
+        wp_version: string;
+        started_at: string;
+        finished_at: string;
+    };
+    items: {
+        plugins: Array<{
+            slug: string;
+            name: string;
+            from_version: string;
+            to_version: string;
+            status: 'safe' | 'risky' | 'unsafe' | 'pending';
+            issues: Array<{ type: string; message: string }>;
+        }>;
+        themes: Array<{
+            slug: string;
+            name: string;
+            status: string;
+            issues: Array<{ type: string; message: string }>;
+        }>;
+    };
+    health_checks: Array<{
+        url: string;
+        label: string;
+        status_code: number;
+        wsod_detected: boolean;
+        errors_detected: string[];
+    }>;
+    logs: {
+        new_entries: string[];
+    };
+}
+
+export async function getAvailableUpdates(): Promise<AvailableUpdates> {
+    const response = await fetch(`${window.sbwpData.restUrl}/safe-update/available`, {
+        headers: { 'X-WP-Nonce': window.sbwpData.nonce }
+    });
+    if (!response.ok) throw new Error('Failed to fetch available updates');
+    return response.json();
+}
+
+export async function createSafeUpdateSession(
+    plugins: string[],
+    themes: string[] = [],
+    core: boolean = false
+): Promise<{ success: boolean; session_id: number; clone_id: string }> {
+    const response = await fetch(`${window.sbwpData.restUrl}/safe-update/session`, {
+        method: 'POST',
+        headers: {
+            'X-WP-Nonce': window.sbwpData.nonce,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ plugins, themes, core })
+    });
+    if (!response.ok) throw new Error('Failed to create safe update session');
+    return response.json();
+}
+
+export async function getSafeUpdateSession(sessionId: number): Promise<SafeUpdateSession> {
+    const response = await fetch(`${window.sbwpData.restUrl}/safe-update/session/${sessionId}`, {
+        headers: { 'X-WP-Nonce': window.sbwpData.nonce }
+    });
+    if (!response.ok) throw new Error('Failed to fetch session');
+    return response.json();
+}
+
+export async function getRecentSessions(): Promise<Array<{
+    id: number;
+    clone_id: string;
+    status: string;
+    created_at: string;
+}>> {
+    const response = await fetch(`${window.sbwpData.restUrl}/safe-update/sessions`, {
+        headers: { 'X-WP-Nonce': window.sbwpData.nonce }
+    });
+    if (!response.ok) throw new Error('Failed to fetch sessions');
+    return response.json();
+}
+
+export async function applySafeUpdates(sessionId: number): Promise<{ success: boolean; message: string }> {
+    const response = await fetch(`${window.sbwpData.restUrl}/safe-update/apply/${sessionId}`, {
+        method: 'POST',
+        headers: { 'X-WP-Nonce': window.sbwpData.nonce }
+    });
+    if (!response.ok) throw new Error('Failed to apply updates');
+    return response.json();
+}
+
+// AI Settings types
+export interface AISettings {
+    is_configured: boolean;
+    masked_key: string;
+}
+
+// Get AI settings
+export async function getAISettings(): Promise<AISettings> {
+    const response = await fetch(`${window.sbwpData.restUrl}/settings/ai`, {
+        headers: { 'X-WP-Nonce': window.sbwpData.nonce }
+    });
+    if (!response.ok) throw new Error('Failed to fetch AI settings');
+    return response.json();
+}
+
+// Save AI API key
+export async function saveAISettings(apiKey: string): Promise<AISettings & { success: boolean }> {
+    const response = await fetch(`${window.sbwpData.restUrl}/settings/ai`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-WP-Nonce': window.sbwpData.nonce
+        },
+        body: JSON.stringify({ api_key: apiKey })
+    });
+    if (!response.ok) throw new Error('Failed to save AI settings');
+    return response.json();
+}
+
+// Get AI-humanized report summary
+export async function humanizeReport(sessionId: number): Promise<{ summary: string }> {
+    const response = await fetch(`${window.sbwpData.restUrl}/ai/humanize-report`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-WP-Nonce': window.sbwpData.nonce
+        },
+        body: JSON.stringify({ session_id: sessionId })
+    });
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Failed to get AI summary');
+    }
+    return response.json();
+}
+
+// Recovery Settings types
+export interface RecoverySettings {
+    url: string;
+    key: string;
+    has_pin: boolean;
+}
+
+export interface CrashStatus {
+    has_crash: boolean;
+    error_summary: string;
+    recovery_url: string;
+}
+
+// Get recovery settings
+export async function getRecoverySettings(): Promise<RecoverySettings> {
+    const response = await fetch(`${window.sbwpData.restUrl}/recovery/settings`, {
+        headers: { 'X-WP-Nonce': window.sbwpData.nonce }
+    });
+    if (!response.ok) throw new Error('Failed to fetch recovery settings');
+    return response.json();
+}
+
+// Save recovery PIN
+export async function saveRecoveryPin(pin: string): Promise<RecoverySettings> {
+    const response = await fetch(`${window.sbwpData.restUrl}/recovery/settings`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-WP-Nonce': window.sbwpData.nonce
+        },
+        body: JSON.stringify({ pin })
+    });
+    if (!response.ok) throw new Error('Failed to save recovery PIN');
+    return response.json();
+}
+
+// Regenerate recovery key
+export async function regenerateRecoveryKey(): Promise<RecoverySettings> {
+    const response = await fetch(`${window.sbwpData.restUrl}/recovery/regenerate-key`, {
+        method: 'POST',
+        headers: { 'X-WP-Nonce': window.sbwpData.nonce }
+    });
+    if (!response.ok) throw new Error('Failed to regenerate key');
+    return response.json();
+}
+
+// Get crash status
+export async function getCrashStatus(): Promise<CrashStatus> {
+    const response = await fetch(`${window.sbwpData.restUrl}/crash-status`, {
+        headers: { 'X-WP-Nonce': window.sbwpData.nonce }
+    });
+    if (!response.ok) throw new Error('Failed to get crash status');
+    return response.json();
 }
