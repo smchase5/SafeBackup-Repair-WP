@@ -16,7 +16,7 @@ if (!defined('WPINC')) {
 }
 
 // Define constants
-define('SBWP_VERSION', '1.0.0');
+define('SBWP_VERSION', '1.0.1');
 define('SBWP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SBWP_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -46,13 +46,26 @@ register_deactivation_hook(__FILE__, 'deactivate_safebackup_repair_wp');
  */
 require_once plugin_dir_path(__FILE__) . 'includes/class-sbwp-admin-ui.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-sbwp-recovery-portal.php';
+require_once plugin_dir_path(__FILE__) . 'includes/class-sbwp-cloud-manager.php';
 
 function run_safebackup_repair_wp()
 {
+	// 1. Start Flight Recorder (Crash Monitor)
+	require_once plugin_dir_path(__FILE__) . 'includes/class-sbwp-flight-recorder.php';
+	$recorder = new SBWP_Flight_Recorder();
+	$recorder->init();
+
 	$plugin_admin = new SBWP_Admin_UI();
 	$plugin_admin->run();
 
 	$recovery = new SBWP_Recovery_Portal();
 	$recovery->init();
+
+	$cloud_manager = new SBWP_Cloud_Manager();
+	$cloud_manager->init();
+
+	require_once plugin_dir_path(__FILE__) . 'includes/class-sbwp-ai-service.php';
+	$ai_service = new SBWP_AI_Settings_REST();
+	$ai_service->init();
 }
-run_safebackup_repair_wp();
+add_action('plugins_loaded', 'run_safebackup_repair_wp');
