@@ -81,17 +81,24 @@ if (!class_exists('SBWP_Flight_Recorder')) {
                 return; // Too soon
             }
 
-            // Retrieve Recovery URL
-            $recovery_settings = get_option('sbwp_recovery_settings', array());
-            $recovery_url = !empty($recovery_settings['url']) ? $recovery_settings['url'] : site_url();
+            // Retrieve Recovery URL with key token
+            $plugin_dir = dirname(dirname(__FILE__));
+            $key_file = $plugin_dir . '/.sbwp-recovery-key';
+            $recovery_key = file_exists($key_file) ? trim(file_get_contents($key_file)) : '';
 
-            $subject = '🚨 Uses Website Crash Detected!';
+            // Build full recovery URL
+            $recovery_url = content_url() . '/plugins/SafeBackup-Repair-WP/recovery.php';
+            if ($recovery_key) {
+                $recovery_url .= '?key=' . $recovery_key;
+            }
+
+            $subject = '🚨 Website Crash Detected!';
             $body = "A fatal error has crashed your website.\n\n";
             $body .= "Error: " . strip_tags($error['message']) . "\n";
             $body .= "File: " . $error['file'] . ":" . $error['line'] . "\n\n";
-            $body .= "Use the Recovery Portal to diagnose and fix this:\n";
+            $body .= "Click here to access the Recovery Portal:\n";
             $body .= $recovery_url . "\n\n";
-            $body .= "Note: You may need your Recovery PIN.\n";
+            $body .= "You will need your Recovery PIN to log in.\n";
             $body .= "(This alert is throttled to once per hour)";
 
             $sent = false;
