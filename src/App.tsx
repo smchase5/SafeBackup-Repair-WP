@@ -17,6 +17,12 @@ function App() {
                         ) : (
                             <span className="text-xs font-medium text-slate-600 bg-slate-100 dark:bg-slate-900/30 dark:text-slate-400 px-2 py-1 rounded-full border border-slate-200 dark:border-slate-800">Free Edition</span>
                         )}
+                        <button
+                            onClick={() => setView('settings')}
+                            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                            Settings
+                        </button>
                     </div>
                 </div>
 

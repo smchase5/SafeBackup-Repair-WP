@@ -23,6 +23,7 @@ export interface Backup {
     storage_location: string;
     size_bytes: string;
     status: string;
+    is_locked?: number;
 }
 
 export async function fetchStats(): Promise<Stats> {
@@ -48,13 +49,62 @@ export async function deleteBackup(id: string): Promise<any> {
         method: 'DELETE',
         headers: { 'X-WP-Nonce': window.sbwpData.nonce }
     });
-    if (!response.ok) throw new Error('Failed to delete backup');
+    if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.message || 'Failed to delete backup');
+    }
     return response.json();
 }
 
 export interface BackupContent {
     plugins: string[];
     themes: string[];
+}
+
+// Backup File Browser types
+export interface BackupFile {
+    name: string;
+    path: string;
+    type: 'file' | 'folder';
+    size: number;
+    depth: number;
+    category?: string;
+    hasChildren?: boolean;
+}
+
+export interface BackupFilesResponse {
+    id: number;
+    created_at: string;
+    type: string;
+    size_bytes: string;
+    files: BackupFile[];
+}
+
+export interface DownloadResponse {
+    download_url: string;
+    filename: string;
+}
+
+export async function getBackupFiles(id: number): Promise<BackupFilesResponse> {
+    const response = await fetch(`${window.sbwpData.restUrl}/backups/${id}/files`, {
+        headers: {
+            'X-WP-Nonce': window.sbwpData.nonce
+        }
+    });
+
+    if (!response.ok) throw new Error('Failed to fetch backup files');
+    return response.json();
+}
+
+export async function downloadBackup(id: number, path: string = '/'): Promise<DownloadResponse> {
+    const response = await fetch(`${window.sbwpData.restUrl}/backups/${id}/download?path=${encodeURIComponent(path)}`, {
+        headers: {
+            'X-WP-Nonce': window.sbwpData.nonce
+        }
+    });
+
+    if (!response.ok) throw new Error('Failed to get download URL');
+    return response.json();
 }
 
 export async function getBackupContents(id: number): Promise<BackupContent> {
@@ -86,9 +136,9 @@ export async function restoreBackup(id: number, items?: BackupContent): Promise<
 }
 
 
-export async function fetchProgress(): Promise<{ percent: number, message: string }> {
+export async function fetchProgress(): Promise<{ percent: number, message: string, active?: boolean, session_id?: string, status?: string }> {
     try {
-        const response = await fetch(`${window.sbwpData.restUrl}/backup/progress`, {
+        const response = await fetch(`${window.sbwpData.restUrl}/backup/progress?t=${Date.now()}`, {
             headers: { 'X-WP-Nonce': window.sbwpData.nonce }
         });
         if (!response.ok) return { percent: 0, message: 'Idle' };
@@ -100,6 +150,18 @@ export async function fetchProgress(): Promise<{ percent: number, message: strin
     } catch (e) {
         return { percent: 0, message: 'Idle' };
     }
+}
+
+export async function cancelBackup(): Promise<any> {
+    const response = await fetch(`${window.sbwpData.restUrl}/backup/cancel`, {
+        method: 'POST',
+        headers: {
+            'X-WP-Nonce': window.sbwpData.nonce
+        }
+    });
+
+    if (!response.ok) throw new Error('Failed to cancel backup');
+    return await response.json();
 }
 
 export interface CloudProvider {
@@ -159,6 +221,7 @@ export interface Settings {
     retention_limit: number;
     alert_email?: string;
     alerts_enabled?: boolean;
+    incremental_enabled?: boolean;
 }
 
 export async function getSettings(): Promise<Settings> {
@@ -184,14 +247,28 @@ export async function saveSettings(settings: Settings): Promise<any> {
     return response.json();
 }
 
-export async function createBackup(resume = false): Promise<any> {
+export async function startBackup(type: 'full' | 'incremental' = 'full', sessionId?: string): Promise<any> {
+    const response = await fetch(`${window.sbwpData.restUrl}/backup`, {
+        method: 'POST',
+        headers: {
+            'X-WP-Nonce': window.sbwpData.nonce,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ type, session_id: sessionId })
+    });
+
+    if (!response.ok) throw new Error('Failed to start backup');
+    return await response.json();
+}
+
+export async function createBackup(type: 'full' | 'incremental' | 'db_only' = 'full', resume = false, sessionId?: string): Promise<any> {
     const response = await fetch(`${window.sbwpData.restUrl}/backups`, {
         method: 'POST',
         headers: {
             'X-WP-Nonce': window.sbwpData.nonce,
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ resume })
+        body: JSON.stringify({ type, resume, session_id: sessionId })
     });
 
     const text = await response.text();
