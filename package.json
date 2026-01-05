@@ -6,7 +6,10 @@
     "scripts": {
         "dev": "vite",
         "build": "tsc && vite build",
-        "preview": "vite preview"
+        "preview": "vite preview",
+        "package": "npm run build && cd .. && rm -f SafeBackup-Repair-WP.zip && zip -r SafeBackup-Repair-WP.zip SafeBackup-Repair-WP -x '*.git*' -x '*node_modules*' -x '*src/*' -x '*.sbwp-*' -x '*test-plugins*' -x '*.DS_Store' -x '*.log*' -x 'SafeBackup-Repair-WP/package*.json' -x 'SafeBackup-Repair-WP/tsconfig*.json' -x 'SafeBackup-Repair-WP/vite.config.ts' -x 'SafeBackup-Repair-WP/postcss.config.js' -x 'SafeBackup-Repair-WP/tailwind.config.js' -x 'SafeBackup-Repair-WP/free-plan.md' && echo '✅ Created SafeBackup-Repair-WP.zip'",
+        "package:pro": "cd .. && rm -f SafeBackup-Repair-WP-Pro.zip && zip -r SafeBackup-Repair-WP-Pro.zip SafeBackup-Repair-WP-Pro -x '*.git*' -x '*.DS_Store' -x 'SafeBackup-Repair-WP-Pro/pro-plan.md' && echo '✅ Created SafeBackup-Repair-WP-Pro.zip'",
+        "package:all": "npm run package && npm run package:pro && echo '🎉 Both plugins packaged!'"
     },
     "dependencies": {
         "@radix-ui/react-dialog": "^1.1.15",

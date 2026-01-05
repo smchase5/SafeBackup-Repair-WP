@@ -16,7 +16,7 @@ if (!defined('WPINC')) {
 }
 
 // Define constants
-define('SBWP_VERSION', '1.0.2');
+define('SBWP_VERSION', '1.0.5');
 define('SBWP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SBWP_PLUGIN_URL', plugin_dir_url(__FILE__));
 

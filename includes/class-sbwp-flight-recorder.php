@@ -14,7 +14,18 @@ if (!class_exists('SBWP_Flight_Recorder')) {
 
         public function init()
         {
-            $this->log_file = dirname(dirname(__FILE__)) . '/.sbwp-crash.log';
+            // Use secure uploads directory for crash log
+            $upload_dir = wp_upload_dir();
+            $secure_dir = $upload_dir['basedir'] . '/sbwp-secure';
+
+            // Ensure directory exists
+            if (!file_exists($secure_dir)) {
+                wp_mkdir_p($secure_dir);
+                file_put_contents($secure_dir . '/.htaccess', "Order deny,allow\nDeny from all");
+                file_put_contents($secure_dir . '/index.php', '<?php // Silence is golden.');
+            }
+
+            $this->log_file = $secure_dir . '/crash.log';
             register_shutdown_function(array($this, 'handle_shutdown'));
             set_exception_handler(array($this, 'handle_exception'));
         }
@@ -73,17 +84,18 @@ if (!class_exists('SBWP_Flight_Recorder')) {
                 return;
             }
 
-            // Throttle: 1 email per hour
-            $alert_file = dirname($this->log_file) . '/.sbwp-last-alert';
+            // Throttle: 1 email per hour (store throttle in same secure dir as log)
+            $upload_dir = wp_upload_dir();
+            $secure_dir = $upload_dir['basedir'] . '/sbwp-secure';
+            $alert_file = $secure_dir . '/last-alert';
             $last_alert = file_exists($alert_file) ? (int) file_get_contents($alert_file) : 0;
 
             if ((time() - $last_alert) < 3600) {
                 return; // Too soon
             }
 
-            // Retrieve Recovery URL with key token
-            $plugin_dir = dirname(dirname(__FILE__));
-            $key_file = $plugin_dir . '/.sbwp-recovery-key';
+            // Retrieve Recovery URL with key token (from secure location)
+            $key_file = $secure_dir . '/recovery-key';
             $recovery_key = file_exists($key_file) ? trim(file_get_contents($key_file)) : '';
 
             // Build full recovery URL

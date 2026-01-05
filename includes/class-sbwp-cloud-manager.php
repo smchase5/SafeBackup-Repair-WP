@@ -26,23 +26,50 @@ class SBWP_Cloud_Manager
         $state = isset($_GET['state']) ? sanitize_text_field($_GET['state']) : '';
         $error = isset($_GET['error']) ? sanitize_text_field($_GET['error']) : '';
 
-        // Retrieve temp data (client_id/secret) passed via state or session? 
-        // State is usually just for protection. 
-        // We need the Client ID/Secret to exchange the token.
-        // Problem: We haven't saved them yet because the user just typed them in the frontend.
-        // Solution: Save them as temporary options BEFORE opening the popup.
-        // Frontend will call REST endpoint to 'prepare_auth' -> saves temp creds -> returns auth url.
+        // Try to get credentials from multiple sources (for object caching resilience)
+        $creds = null;
 
-        // Actually, let's keep it simple: WE MUST SAVE THE CREDS FIRST.
-        // In the frontend, we will have a "Save Credentials" step or we do it implicitly.
-        $creds = get_option('sbwp_gdrive_temp_creds');
+        // 1. Try FILE first (bypasses all caching)
+        $temp_file = WP_CONTENT_DIR . '/.sbwp_gdrive_temp';
+        if (file_exists($temp_file)) {
+            $file_content = file_get_contents($temp_file);
+            if ($file_content) {
+                $creds = json_decode($file_content, true);
+            }
+        }
+
+        if (empty($creds) || empty($creds['client_id'])) {
+            $creds = get_option('sbwp_gdrive_creds');
+        }
+
+        // 3. Last Resort: Extract from STATE param (Stateless Auth)
+        if ((empty($creds) || empty($creds['client_id'])) && $state) {
+            $decoded = json_decode(base64_decode($state), true);
+            if (is_array($decoded) && !empty($decoded['cid']) && !empty($decoded['sec'])) {
+                $creds = array(
+                    'client_id' => $decoded['cid'],
+                    'client_secret' => $decoded['sec']
+                );
+                // Save them now so we have them for the next step
+                update_option('sbwp_gdrive_creds', $creds, false);
+            }
+        }
 
         if ($error) {
             wp_die("Google Auth Error: $error");
         }
 
-        if (!$code || empty($creds)) {
-            wp_die("Invalid request or missing credentials. Please try again.");
+        if (!$code || empty($creds) || empty($creds['client_id'])) {
+            $debug_info = 'Code: ' . ($code ? 'present' : 'missing');
+            $debug_info .= ', File: ' . (file_exists($temp_file) ? 'exists' : 'missing');
+            $debug_info .= ', Option: ' . (get_option('sbwp_gdrive_creds') ? 'yes' : 'no');
+            $debug_info .= ', State: ' . ($state ? 'present' : 'missing');
+
+            error_log('SBWP OAuth Debug: ' . $debug_info);
+            // Dump state for inspection if needed (careful with secrets in prod logs, but this is debug mode)
+            // error_log('State dump: ' . print_r(json_decode(base64_decode($state), true), true));
+
+            wp_die("Invalid request or missing credentials. Please try again. (Debug: $debug_info)");
         }
 
         $provider = $this->get_provider('gdrive');
@@ -171,14 +198,33 @@ class SBWP_Cloud_Manager
                     $client_id = SBWP_GDRIVE_CLIENT_ID;
                     $client_secret = SBWP_GDRIVE_CLIENT_SECRET;
                 } else {
-                    update_option('sbwp_gdrive_temp_creds', array(
+                    // Store in FILE to bypass object caching completely
+                    $temp_file = WP_CONTENT_DIR . '/.sbwp_gdrive_temp';
+                    $temp_data = json_encode(array(
+                        'client_id' => $client_id,
+                        'client_secret' => $client_secret,
+                        'ts' => time()
+                    ));
+                    file_put_contents($temp_file, $temp_data);
+
+                    // Also save permanently as backup
+                    update_option('sbwp_gdrive_creds', array(
                         'client_id' => $client_id,
                         'client_secret' => $client_secret
-                    ));
+                    ), false);
                 }
 
                 $callback_url = admin_url('admin-ajax.php?action=sbwp_oauth_callback');
-                $auth_url = $provider->get_auth_url($client_id, $client_secret, $callback_url);
+
+                // CRITICAL: Embed creds in state as a fail-safe against storage/caching issues
+                $extra_state = array(
+                    'cid' => $client_id,
+                    'sec' => $client_secret
+                );
+
+                $auth_url = $provider->get_auth_url($client_id, $client_secret, $callback_url, $extra_state);
+
+                error_log("SBWP Prepare: ClientID=" . substr($client_id, 0, 5) . "..., AuthURL=" . substr($auth_url, 0, 20) . "...");
 
                 return rest_ensure_response(array('success' => true, 'auth_url' => $auth_url));
             }

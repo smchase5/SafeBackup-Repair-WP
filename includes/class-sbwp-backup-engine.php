@@ -7,7 +7,7 @@ class SBWP_Backup_Engine
     private $retention_limit = 5;
     private $time_limit = 5; // Buffer against slow IO
     private $batch_limit = 500; // Rows per batch (increased for cursor efficiency)
-    private $chunk_size_bytes = 500 * 1024 * 1024; // 500MB per SQL chunk
+    private $chunk_size_bytes = 50 * 1024 * 1024; // 50MB per SQL/ZIP chunk (lower for shared host compatibility)
     private $pk_cache = []; // Cache primary keys per table
     private $last_checksums = null; // Cache for incremental comparison
     private $session_id = null;
@@ -487,6 +487,25 @@ class SBWP_Backup_Engine
                 if (strpos($file_path, '.git') !== false)
                     continue;
                 if (strpos($file_path, 'cache') !== false)
+                    continue;
+
+                /**
+                 * Filter: sbwp_backup_exclusions
+                 * Allows users/developers to add custom exclusion patterns.
+                 * 
+                 * @param array  $exclusions Array of substrings to match in file paths
+                 * @param string $file_path  The current file being evaluated
+                 * @return array Modified exclusions array
+                 */
+                $custom_exclusions = apply_filters('sbwp_backup_exclusions', [], $file_path);
+                $should_exclude = false;
+                foreach ($custom_exclusions as $pattern) {
+                    if (strpos($file_path, $pattern) !== false) {
+                        $should_exclude = true;
+                        break;
+                    }
+                }
+                if ($should_exclude)
                     continue;
 
                 $file_size = $file->getSize();

@@ -198,16 +198,30 @@ export function CloudSettingsDialog({ open, onOpenChange }: CloudSettingsDialogP
                                                 onClick={async () => {
                                                     setProcessing('gdrive')
                                                     try {
-                                                        await connectProvider('gdrive', 'prepare', {
+                                                        // Call prepare - this saves credentials server-side
+                                                        const result = await connectProvider('gdrive', 'prepare', {
                                                             client_id: clientId,
                                                             client_secret: clientSecret
                                                         })
 
-                                                        const redirect_uri = encodeURIComponent(`${window.sbwpData.root}wp-admin/admin-ajax.php?action=sbwp_oauth_callback`)
-                                                        const scope = encodeURIComponent('https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email')
-                                                        const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirect_uri}&response_type=code&scope=${scope}&access_type=offline&prompt=consent`
+                                                        console.log('SBWP: Prepare result:', result)
 
-                                                        const popup = window.open(url, 'sbwp_auth', 'width=600,height=700')
+                                                        // If prepare succeeded, we can proceed. 
+                                                        // If server didn't return auth_url (weird), construct it here as fallback.
+                                                        let targetUrl = result.auth_url;
+
+                                                        if (!targetUrl && result.success) {
+                                                            console.warn('SBWP: Server missing auth_url, using fallback.');
+                                                            const redirect_uri = encodeURIComponent(`${window.sbwpData.root}wp-admin/admin-ajax.php?action=sbwp_oauth_callback`)
+                                                            const scope = encodeURIComponent('https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email')
+                                                            targetUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirect_uri}&response_type=code&scope=${scope}&access_type=offline&prompt=consent`
+                                                        }
+
+                                                        if (!targetUrl) {
+                                                            throw new Error('Prepare failed - could not generate auth URL')
+                                                        }
+
+                                                        const popup = window.open(targetUrl, 'sbwp_auth', 'width=600,height=700')
 
                                                         const checkPopup = setInterval(() => {
                                                             if (popup?.closed) {
@@ -227,10 +241,10 @@ export function CloudSettingsDialog({ open, onOpenChange }: CloudSettingsDialogP
                                                             }
                                                         }, { once: true })
 
-                                                    } catch (e) {
-                                                        console.error(e)
+                                                    } catch (e: any) {
+                                                        console.error('SBWP Auth Error:', e)
                                                         setProcessing(null)
-                                                        alert("Failed to initialize authentication.")
+                                                        alert(e.message || "Failed to initialize authentication.")
                                                     }
                                                 }}
                                                 disabled={processing === provider.id || (!provider.global_creds && (!clientId || !clientSecret))}

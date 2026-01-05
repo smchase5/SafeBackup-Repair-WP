@@ -28,11 +28,17 @@ class SBWP_Google_Drive_Provider implements SBWP_Cloud_Provider
     /**
      * Get the Authorization URL for the consent screen.
      */
-    public function get_auth_url($client_id, $client_secret, $callback_url)
+    public function get_auth_url($client_id, $client_secret, $callback_url, $extra_state = array())
     {
-        // Generate and store state nonce for security
-        $state = wp_create_nonce('sbwp_gdrive_auth');
-        set_transient('sbwp_gdrive_auth_state', $state, 600); // 10 minutes
+        // Generate nonce
+        $nonce = wp_create_nonce('sbwp_gdrive_auth');
+
+        // Combine nonce with any extra state (like creds) to survive the roundtrip
+        $state_data = array_merge(array('nonce' => $nonce), $extra_state);
+        $state = base64_encode(json_encode($state_data));
+
+        // Store nonce transient for verify (optional, but good for CSRF)
+        set_transient('sbwp_gdrive_auth_state', $nonce, 600);
 
         $base = 'https://accounts.google.com/o/oauth2/v2/auth';
         $params = array(
@@ -41,7 +47,7 @@ class SBWP_Google_Drive_Provider implements SBWP_Cloud_Provider
             'response_type' => 'code',
             'scope' => 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email',
             'access_type' => 'offline',
-            'prompt' => 'consent', // Force to ensure we get a refresh_token
+            'prompt' => 'consent',
             'state' => $state
         );
         return add_query_arg($params, $base);

@@ -5,8 +5,56 @@ class SBWP_Recovery_Portal
     private $key_option = 'sbwp_recovery_key';
     private $pin_option = 'sbwp_recovery_pin';
 
+    /**
+     * Get the secure storage directory path.
+     * Creates the directory with .htaccess protection if it doesn't exist.
+     */
+    private function get_secure_dir()
+    {
+        $upload_dir = wp_upload_dir();
+        $secure_dir = $upload_dir['basedir'] . '/sbwp-secure';
+
+        if (!file_exists($secure_dir)) {
+            wp_mkdir_p($secure_dir);
+            // Protect the directory
+            file_put_contents($secure_dir . '/.htaccess', "Order deny,allow\nDeny from all");
+            file_put_contents($secure_dir . '/index.php', '<?php // Silence is golden.');
+        }
+
+        return $secure_dir;
+    }
+
+    /**
+     * Migrate files from old plugin-root location to secure location.
+     */
+    private function migrate_legacy_files()
+    {
+        $secure_dir = $this->get_secure_dir();
+        $old_files = [
+            '.sbwp-recovery-key' => 'recovery-key',
+            '.sbwp-recovery-pin' => 'recovery-pin',
+            '.sbwp-ai-key' => 'ai-key',
+        ];
+
+        foreach ($old_files as $old_name => $new_name) {
+            $old_path = SBWP_PLUGIN_DIR . $old_name;
+            $new_path = $secure_dir . '/' . $new_name;
+
+            if (file_exists($old_path) && !file_exists($new_path)) {
+                // Copy to new location
+                copy($old_path, $new_path);
+                @chmod($new_path, 0600);
+                // Remove old file
+                @unlink($old_path);
+            }
+        }
+    }
+
     public function init()
     {
+        // Migrate legacy files from plugin root to secure location
+        $this->migrate_legacy_files();
+
         add_action('init', array($this, 'check_recovery_mode'));
         add_action('init', array($this, 'ensure_recovery_key'));
         add_action('rest_api_init', array($this, 'register_rest_routes'));
@@ -68,7 +116,7 @@ class SBWP_Recovery_Portal
      */
     public function ensure_recovery_key()
     {
-        $key_file = SBWP_PLUGIN_DIR . '.sbwp-recovery-key';
+        $key_file = $this->get_secure_dir() . '/recovery-key';
 
         // Check if file already has a key
         if (file_exists($key_file)) {
@@ -98,7 +146,7 @@ class SBWP_Recovery_Portal
      */
     public function get_recovery_key()
     {
-        $key_file = SBWP_PLUGIN_DIR . '.sbwp-recovery-key';
+        $key_file = $this->get_secure_dir() . '/recovery-key';
         if (file_exists($key_file)) {
             $key = trim(file_get_contents($key_file));
             if (!empty($key)) {
@@ -141,7 +189,7 @@ class SBWP_Recovery_Portal
 
         if (isset($params['pin'])) {
             $pin = sanitize_text_field($params['pin']);
-            $pin_file = SBWP_PLUGIN_DIR . '.sbwp-recovery-pin';
+            $pin_file = $this->get_secure_dir() . '/recovery-pin';
 
             if (empty($pin)) {
                 delete_option($this->pin_option);

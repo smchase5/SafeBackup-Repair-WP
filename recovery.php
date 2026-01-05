@@ -21,9 +21,38 @@ $plugins_dir = dirname($plugin_dir);
 $wp_content_dir = dirname($plugins_dir);
 $wp_root = dirname($wp_content_dir);
 
-// Key file location (in plugin directory)
-$key_file = $plugin_dir . '/.sbwp-recovery-key';
-$pin_file = $plugin_dir . '/.sbwp-recovery-pin';
+// Secure storage directory (in uploads)
+$secure_dir = $wp_content_dir . '/uploads/sbwp-secure';
+
+// Ensure secure directory exists with protection
+if (!file_exists($secure_dir)) {
+    @mkdir($secure_dir, 0755, true);
+    @file_put_contents($secure_dir . '/.htaccess', "Order deny,allow\nDeny from all");
+    @file_put_contents($secure_dir . '/index.php', '<?php // Silence is golden.');
+}
+
+// Key file locations (in secure uploads directory)
+$key_file = $secure_dir . '/recovery-key';
+$pin_file = $secure_dir . '/recovery-pin';
+$ai_key_file = $secure_dir . '/ai-key';
+
+// Legacy file locations (in plugin directory) - for migration
+$legacy_key_file = $plugin_dir . '/.sbwp-recovery-key';
+$legacy_pin_file = $plugin_dir . '/.sbwp-recovery-pin';
+$legacy_ai_key_file = $plugin_dir . '/.sbwp-ai-key';
+
+// Migrate legacy files if they exist
+function sbwp_migrate_legacy_file($old_path, $new_path)
+{
+    if (file_exists($old_path) && !file_exists($new_path)) {
+        @copy($old_path, $new_path);
+        @chmod($new_path, 0600);
+        @unlink($old_path);
+    }
+}
+sbwp_migrate_legacy_file($legacy_key_file, $key_file);
+sbwp_migrate_legacy_file($legacy_pin_file, $pin_file);
+sbwp_migrate_legacy_file($legacy_ai_key_file, $ai_key_file);
 
 // ============================================================================
 // AUTHENTICATION
@@ -84,10 +113,9 @@ if (empty($stored_key)) {
 
 function sbwp_get_ai_key()
 {
-    global $plugin_dir;
-    $file = $plugin_dir . '/.sbwp-ai-key';
-    if (file_exists($file))
-        return trim(file_get_contents($file));
+    global $ai_key_file;
+    if (file_exists($ai_key_file))
+        return trim(file_get_contents($ai_key_file));
     return '';
 }
 
@@ -511,7 +539,7 @@ if ($action) {
             $log_content = "";
 
             // 1. Read Flight Recorder Log
-            $flight_log = $plugin_dir . '/.sbwp-crash.log';
+            $flight_log = $secure_dir . '/crash.log';
             if (file_exists($flight_log)) {
                 $log_content .= "==================================================\n";
                 $log_content .= "✈️ FLIGHT RECORDER (SafeBackup Internal Crash Log)\n";
@@ -618,7 +646,7 @@ if ($action) {
             $cleared = [];
 
             // Clear flight recorder
-            $flight_log = $plugin_dir . '/.sbwp-crash.log';
+            $flight_log = $secure_dir . '/crash.log';
             if (file_exists($flight_log)) {
                 $archive = $flight_log . '.archived.' . date('Y-m-d-H-i-s');
                 if (rename($flight_log, $archive)) {
@@ -669,7 +697,7 @@ if ($action) {
             };
 
             // 1. Read Flight Recorder Log (always recent since it's crash-specific)
-            $flight_log = $plugin_dir . '/.sbwp-crash.log';
+            $flight_log = $secure_dir . '/crash.log';
             $debug_info['flight_log_path'] = $flight_log;
             $debug_info['flight_log_exists'] = file_exists($flight_log);
 
@@ -1010,7 +1038,7 @@ if ($action) {
             $last_error = '';
 
             // 1. Check Flight Recorder first (most relevant crashes)
-            $flight_log = $plugin_dir . '/.sbwp-crash.log';
+            $flight_log = $secure_dir . '/crash.log';
             if (file_exists($flight_log)) {
                 $lines = file($flight_log);
                 for ($i = count($lines) - 1; $i >= 0; $i--) {
