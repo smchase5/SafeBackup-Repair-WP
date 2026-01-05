@@ -7,7 +7,7 @@ import { ShieldCheck, HardDrive, RefreshCw, Loader2, ArrowUpCircle, Database, Ar
 import { Progress } from "@/components/ui/progress"
 import { fetchStats, createBackup, fetchProgress, getCrashStatus, getSettings, saveSettings, cancelBackup, type Stats, type CrashStatus } from "@/lib/api"
 import { useToast } from "@/components/ui/use-toast"
-import { Toaster } from "@/components/ui/toaster"
+
 import { SafeUpdateDialog } from "./SafeUpdateDialog"
 import { ConflictScannerDialog } from "./ConflictScannerDialog"
 import { BackupsList } from "./BackupsList"
@@ -211,7 +211,7 @@ export function DashboardPage({ onNavigate: _onNavigate }: DashboardPageProps) {
 
     return (
         <div className="space-y-6">
-            <Toaster />
+
             <SafeUpdateDialog open={showSafeUpdate} onOpenChange={setShowSafeUpdate} />
             <ConflictScannerDialog open={showScanner} onOpenChange={setShowScanner} />
 

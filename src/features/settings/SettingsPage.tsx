@@ -5,8 +5,9 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/components/ui/use-toast"
 import { getSettings, saveSettings, getAISettings, saveAISettings, getRecoverySettings, saveRecoveryPin, regenerateRecoveryKey, type Settings, type AISettings, type RecoverySettings } from "@/lib/api"
-import { Loader2, ArrowLeft, Sparkles, Check, X, Shield, Copy, RefreshCw, Key, Bell } from "lucide-react"
+import { Loader2, ArrowLeft, Sparkles, Check, X, Shield, Copy, RefreshCw, Key, Bell, Save, Cloud, Calendar, Settings as SettingsIcon } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
+import { Separator } from "@/components/ui/separator"
 import { copyToClipboard } from "@/lib/utils"
 
 import { CloudSettingsDialog } from "../dashboard/CloudSettingsDialog"
@@ -17,28 +18,47 @@ interface SettingsPageProps {
 }
 
 export function SettingsPage({ onBack, onNavigate }: SettingsPageProps) {
+    // State
     const [settings, setSettings] = useState<Settings>({ retention_limit: 5 })
     const [aiSettings, setAiSettings] = useState<AISettings | null>(null)
     const [recoverySettings, setRecoverySettings] = useState<RecoverySettings | null>(null)
+
+    // Form Inputs
     const [aiKeyInput, setAiKeyInput] = useState('')
     const [pinInput, setPinInput] = useState('')
+
+    // UI State
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
-    const [savingAI, setSavingAI] = useState(false)
-    const [savingRecovery, setSavingRecovery] = useState(false)
     const [showCloudSettings, setShowCloudSettings] = useState(false)
     const [copied, setCopied] = useState(false)
     const { toast } = useToast()
 
+    const isPro = window.sbwpData.isPro
+
     useEffect(() => {
-        Promise.all([
-            getSettings().then(setSettings),
-            window.sbwpData.isPro ? getAISettings().then(setAiSettings) : Promise.resolve(),
-            getRecoverySettings().then(setRecoverySettings)
-        ])
-            .catch(console.error)
-            .finally(() => setLoading(false))
-    }, [])
+        const loadData = async () => {
+            try {
+                const [s, r] = await Promise.all([
+                    getSettings(),
+                    getRecoverySettings()
+                ])
+                setSettings(s)
+                setRecoverySettings(r)
+
+                if (isPro) {
+                    const ai = await getAISettings()
+                    setAiSettings(ai)
+                }
+            } catch (e) {
+                console.error(e)
+                toast({ title: "Error", description: "Failed to load settings.", variant: "destructive" })
+            } finally {
+                setLoading(false)
+            }
+        }
+        loadData()
+    }, [isPro, toast])
 
     const handleCopyUrl = async () => {
         if (recoverySettings?.url) {
@@ -53,23 +73,9 @@ export function SettingsPage({ onBack, onNavigate }: SettingsPageProps) {
         }
     }
 
-    const handleSavePin = async () => {
-        setSavingRecovery(true)
-        try {
-            const result = await saveRecoveryPin(pinInput)
-            setRecoverySettings(result)
-            setPinInput('')
-            toast({ title: pinInput ? "PIN Set" : "PIN Removed", description: pinInput ? "Your recovery PIN has been saved." : "Your recovery PIN has been removed." })
-        } catch (e) {
-            toast({ title: "Error", description: "Failed to save PIN.", variant: "destructive" })
-        } finally {
-            setSavingRecovery(false)
-        }
-    }
-
     const handleRegenerateKey = async () => {
         if (!confirm('Are you sure? This will invalidate your old recovery URL.')) return
-        setSavingRecovery(true)
+        setSaving(true)
         try {
             const result = await regenerateRecoveryKey()
             setRecoverySettings(result)
@@ -77,65 +83,58 @@ export function SettingsPage({ onBack, onNavigate }: SettingsPageProps) {
         } catch (e) {
             toast({ title: "Error", description: "Failed to regenerate key.", variant: "destructive" })
         } finally {
-            setSavingRecovery(false)
-        }
-    }
-
-    const handleSaveAIKey = async () => {
-        setSavingAI(true)
-        try {
-            const result = await saveAISettings(aiKeyInput)
-            setAiSettings(result)
-            setAiKeyInput('')
-            toast({
-                title: "API Key Saved",
-                description: "Your OpenAI API key has been saved.",
-            })
-        } catch (error) {
-            toast({
-                title: "Error",
-                description: "Failed to save API key.",
-                variant: "destructive"
-            })
-        } finally {
-            setSavingAI(false)
+            setSaving(false)
         }
     }
 
     const handleRemoveAIKey = async () => {
-        setSavingAI(true)
+        if (!confirm('Remove OpenAI API Key?')) return
+        setSaving(true)
         try {
             const result = await saveAISettings('')
             setAiSettings(result)
-            toast({
-                title: "API Key Removed",
-                description: "Your OpenAI API key has been removed.",
-            })
+            setAiKeyInput('')
+            toast({ title: "API Key Removed" })
         } catch (error) {
-            toast({
-                title: "Error",
-                description: "Failed to remove API key.",
-                variant: "destructive"
-            })
+            toast({ title: "Error", description: "Failed to remove API key.", variant: "destructive" })
         } finally {
-            setSavingAI(false)
+            setSaving(false)
         }
     }
 
-    const handleSave = async () => {
+    const handleSaveAll = async () => {
         setSaving(true)
+        const promises = []
+
+        // 1. General Settings
+        promises.push(saveSettings(settings))
+
+        // 2. Recovery PIN (if changed)
+        if (pinInput) {
+            promises.push(saveRecoveryPin(pinInput).then(r => {
+                setRecoverySettings(r)
+                setPinInput('') // Clear after save
+                return r
+            }))
+        } else if (pinInput === '' && recoverySettings?.has_pin === false) {
+            // Nothing to do if empty and already no pin
+        }
+
+        // 3. AI Settings (if Pro and input exists)
+        if (isPro && aiKeyInput) {
+            promises.push(saveAISettings(aiKeyInput).then(a => {
+                setAiSettings(a)
+                setAiKeyInput('') // Clear
+                return a
+            }))
+        }
+
         try {
-            await saveSettings(settings)
-            toast({
-                title: "Settings Saved",
-                description: "Your settings have been updated.",
-            })
+            await Promise.all(promises)
+            toast({ title: "Settings Saved", description: "All changes have been applied successfully." })
         } catch (error) {
-            toast({
-                title: "Error",
-                description: "Failed to save settings.",
-                variant: "destructive"
-            })
+            console.error(error)
+            toast({ title: "Error", description: "Some settings failed to save.", variant: "destructive" })
         } finally {
             setSaving(false)
         }
@@ -146,279 +145,286 @@ export function SettingsPage({ onBack, onNavigate }: SettingsPageProps) {
     }
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-8 pb-24">
             <CloudSettingsDialog open={showCloudSettings} onOpenChange={setShowCloudSettings} />
 
-            <Button variant="ghost" className="pl-0 gap-2" onClick={onBack}>
-                <ArrowLeft className="h-4 w-4" />
-                Back to Dashboard
-            </Button>
-
-            <h2 className="text-xl font-semibold tracking-tight">Configuration</h2>
-
-            <Card>
-                <CardHeader>
-                    <CardTitle>General Settings</CardTitle>
-                    <CardDescription>Configure how SafeBackup handles your data.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="grid gap-2">
-                        <Label htmlFor="retention">Local Backup Retention</Label>
-                        <Input
-                            id="retention"
-                            type="number"
-                            min={1}
-                            max={50}
-                            value={settings.retention_limit}
-                            onChange={e => setSettings(s => ({ ...s, retention_limit: parseInt(e.target.value) || 1 }))}
-                        />
-                        <p className="text-xs text-muted-foreground">
-                            Number of local backups to keep. Oldest backups will be deleted automatically when this limit is reached.
-                        </p>
+            {/* Page Header */}
+            <div className="space-y-1">
+                <Button variant="ghost" className="pl-0 gap-2 text-muted-foreground hover:text-foreground -ml-2 mb-2" onClick={onBack}>
+                    <ArrowLeft className="h-4 w-4" />
+                    Back to Dashboard
+                </Button>
+                <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                        <SettingsIcon className="h-5 w-5 text-primary" />
                     </div>
-
-                    <Button onClick={handleSave} disabled={saving}>
-                        {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                        Save Changes
-                    </Button>
-                </CardContent>
-            </Card>
-
-            <Card className={settings.alerts_enabled ? "border-red-500/50 bg-red-500/5" : ""}>
-                <CardHeader>
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                            <Bell className="h-5 w-5 text-red-500" />
-                            <CardTitle>Crash Alerts</CardTitle>
-                        </div>
-                        {settings.alerts_enabled && (
-                            <span className="text-[10px] bg-red-500/20 text-red-600 px-2 py-0.5 rounded-full font-bold">ACTIVE</span>
-                        )}
+                    <div>
+                        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+                        <p className="text-sm text-muted-foreground">Configure backup preferences and security options</p>
                     </div>
-                    <CardDescription>Get notified immediately if your site crashes.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="flex items-center justify-between space-x-2">
-                        <Label htmlFor="alerts-enabled" className="flex flex-col space-y-1">
-                            <span>Enable Email Alerts</span>
-                            <span className="font-normal text-xs text-muted-foreground">
-                                We'll send you a link to the Recovery Portal if a fatal error is detected.
-                            </span>
-                        </Label>
-                        <Switch
-                            id="alerts-enabled"
-                            checked={settings.alerts_enabled || false}
-                            onCheckedChange={checked => setSettings(s => ({ ...s, alerts_enabled: checked }))}
-                        />
-                    </div>
+                </div>
+            </div>
 
-                    {settings.alerts_enabled && (
-                        <div className="space-y-2 pt-2 border-t">
-                            <Label htmlFor="alert-email">Notification Email</Label>
-                            <Input
-                                id="alert-email"
-                                type="email"
-                                placeholder="admin@example.com"
-                                value={settings.alert_email || ''}
-                                onChange={e => setSettings(s => ({ ...s, alert_email: e.target.value }))}
-                            />
-                        </div>
-                    )}
+            {/* General Settings Section */}
+            <section className="space-y-4">
+                <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">General</h2>
+                    <Separator className="flex-1" />
+                </div>
 
-                    <Button onClick={handleSave} disabled={saving} variant={settings.alerts_enabled ? "destructive" : "default"}>
-                        {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                        Save Alert Settings
-                    </Button>
-                </CardContent>
-            </Card>
-
-            <div className="grid gap-4 md:grid-cols-2">
-                <Card className={window.sbwpData.isPro ? "border-emerald-500/50 bg-emerald-500/5" : "opacity-80"}>
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">
-                            Cloud Storage
-                        </CardTitle>
-                        {window.sbwpData.isPro ? (
-                            <span className="text-[10px] bg-emerald-500/20 text-emerald-500 px-2 py-0.5 rounded-full font-bold">PRO ACTIVE</span>
-                        ) : (
-                            <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold">FREE</span>
-                        )}
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold">
-                            {window.sbwpData.isPro ? 'Configure' : 'Locked'}
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-1">
-                            {window.sbwpData.isPro
-                                ? 'Connect to Google Drive / S3'
-                                : 'Upgrade to enable Cloud Backups'}
-                        </p>
-                        {window.sbwpData.isPro ? (
-                            <Button size="sm" variant="outline" className="mt-4 w-full h-8 text-xs" onClick={() => setShowCloudSettings(true)}>
-                                Configure Cloud
-                            </Button>
-                        ) : (
-                            <Button size="sm" variant="secondary" className="mt-4 w-full h-8 text-xs">
-                                Get Pro
-                            </Button>
-                        )}
-                    </CardContent>
-                </Card>
-
-                {window.sbwpData.isPro && (
-                    <Card className="border-emerald-500/50 bg-emerald-500/5">
-                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                            <CardTitle className="text-sm font-medium">Scheduled Backups</CardTitle>
-                            <span className="text-[10px] bg-emerald-500/20 text-emerald-500 px-2 py-0.5 rounded-full font-bold">PRO ACTIVE</span>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Backup Retention */}
+                    <Card>
+                        <CardHeader className="pb-4">
+                            <CardTitle className="text-base">Backup Retention</CardTitle>
+                            <CardDescription>
+                                Number of recent backups to keep on the server.
+                            </CardDescription>
                         </CardHeader>
                         <CardContent>
-                            <div className="text-2xl font-bold">Manage</div>
-                            <p className="text-xs text-muted-foreground mt-1">
-                                Automated daily/weekly backups
+                            <div className="flex items-center gap-4">
+                                <Input
+                                    id="retention"
+                                    type="number"
+                                    min={1}
+                                    max={50}
+                                    className="w-24"
+                                    value={settings.retention_limit}
+                                    onChange={e => setSettings(s => ({ ...s, retention_limit: parseInt(e.target.value) || 1 }))}
+                                />
+                                <span className="text-sm text-muted-foreground">backups</span>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    {/* Crash Alerts */}
+                    <Card className={settings.alerts_enabled ? "ring-1 ring-red-500/20 bg-red-500/5" : ""}>
+                        <CardHeader className="pb-4">
+                            <div className="flex items-center justify-between">
+                                <CardTitle className="text-base flex items-center gap-2">
+                                    <Bell className="h-4 w-4" />
+                                    Crash Alerts
+                                </CardTitle>
+                                <Switch
+                                    id="alerts-enabled"
+                                    checked={settings.alerts_enabled || false}
+                                    onCheckedChange={checked => setSettings(s => ({ ...s, alerts_enabled: checked }))}
+                                />
+                            </div>
+                            <CardDescription>
+                                Receive an email with a recovery link if your site crashes.
+                            </CardDescription>
+                        </CardHeader>
+                        {settings.alerts_enabled && (
+                            <CardContent className="pt-0">
+                                <div className="space-y-2">
+                                    <Label htmlFor="alert-email" className="text-sm">Notification Email</Label>
+                                    <Input
+                                        id="alert-email"
+                                        type="email"
+                                        placeholder="admin@example.com"
+                                        value={settings.alert_email || ''}
+                                        onChange={e => setSettings(s => ({ ...s, alert_email: e.target.value }))}
+                                    />
+                                </div>
+                            </CardContent>
+                        )}
+                    </Card>
+                </div>
+            </section>
+
+            {/* Recovery Portal Section */}
+            <section className="space-y-4">
+                <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Security</h2>
+                    <Separator className="flex-1" />
+                </div>
+
+                <Card className="ring-1 ring-orange-500/20 bg-gradient-to-br from-orange-500/5 to-transparent">
+                    <CardHeader className="pb-4">
+                        <div className="flex items-center justify-between">
+                            <CardTitle className="text-lg flex items-center gap-2">
+                                <Shield className="h-5 w-5 text-orange-600" />
+                                Recovery Portal
+                            </CardTitle>
+                            {recoverySettings?.has_pin && (
+                                <span className="text-xs bg-emerald-500/10 text-emerald-600 px-2.5 py-1 rounded-full font-medium flex items-center gap-1.5 border border-emerald-500/20">
+                                    <Key className="h-3 w-3" />
+                                    PIN Protected
+                                </span>
+                            )}
+                        </div>
+                        <CardDescription>
+                            Emergency access to your site when WordPress is down.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                        {/* Recovery URL */}
+                        <div className="space-y-2">
+                            <Label className="text-sm">Recovery URL</Label>
+                            <div className="flex gap-2">
+                                <div className="flex-1 flex items-center gap-2 bg-muted/50 p-3 rounded-md border">
+                                    <code className="flex-1 text-xs font-mono truncate text-muted-foreground">
+                                        {recoverySettings?.url}
+                                    </code>
+                                    <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={handleCopyUrl}>
+                                        {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                                    </Button>
+                                </div>
+                                <Button variant="outline" size="sm" className="shrink-0 text-muted-foreground hover:text-destructive" onClick={handleRegenerateKey}>
+                                    <RefreshCw className="h-3.5 w-3.5 mr-2" />
+                                    Reset
+                                </Button>
+                            </div>
+                        </div>
+
+                        {/* PIN Setting */}
+                        <div className="space-y-2 max-w-sm">
+                            <Label className="text-sm">{recoverySettings?.has_pin ? 'Update PIN' : 'Set PIN (Optional)'}</Label>
+                            <Input
+                                type="password"
+                                placeholder={recoverySettings?.has_pin ? "Enter new PIN to change" : "Enter PIN to protect portal"}
+                                value={pinInput}
+                                onChange={e => setPinInput(e.target.value)}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                {recoverySettings?.has_pin ? 'Leave blank to keep your current PIN.' : 'Add an extra layer of security to your recovery portal.'}
                             </p>
-                            <Button size="sm" variant="outline" className="mt-4 w-full h-8 text-xs" onClick={() => onNavigate('schedules')}>
-                                Configure Schedules
+                        </div>
+                    </CardContent>
+                </Card>
+            </section>
+
+            {/* Pro Features Section */}
+            <section className="space-y-4">
+                <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Pro Features</h2>
+                    <Separator className="flex-1" />
+                    {!isPro && (
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-gradient-to-r from-violet-500/10 to-purple-500/10 text-violet-600 border border-violet-500/20">
+                            Upgrade to Pro
+                        </span>
+                    )}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {/* Cloud Storage */}
+                    <Card className={!isPro ? "opacity-60" : ""}>
+                        <CardHeader className="pb-4">
+                            <div className="flex items-center justify-between">
+                                <CardTitle className="text-base flex items-center gap-2">
+                                    <Cloud className="h-4 w-4" />
+                                    Cloud Storage
+                                </CardTitle>
+                                {!isPro && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">PRO</span>}
+                            </div>
+                            <CardDescription>
+                                Sync backups to Google Drive or AWS S3.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <Button
+                                variant={isPro ? "outline" : "secondary"}
+                                size="sm"
+                                className="w-full"
+                                onClick={() => isPro && setShowCloudSettings(true)}
+                                disabled={!isPro}
+                            >
+                                {isPro ? 'Configure Cloud' : 'Requires Pro'}
                             </Button>
                         </CardContent>
                     </Card>
-                )}
-            </div>
 
-            {/* AI Assistant Settings */}
-            <Card className={window.sbwpData.isPro ? "border-violet-500/50 bg-violet-500/5" : "opacity-80"}>
-                <CardHeader>
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                            <Sparkles className="h-5 w-5 text-violet-500" />
-                            <CardTitle>AI Assistant</CardTitle>
-                        </div>
-                        {window.sbwpData.isPro ? (
-                            aiSettings?.is_configured ? (
-                                <span className="text-[10px] bg-emerald-500/20 text-emerald-500 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
-                                    <Check className="h-3 w-3" /> CONNECTED
-                                </span>
-                            ) : (
-                                <span className="text-[10px] bg-amber-500/20 text-amber-600 px-2 py-0.5 rounded-full font-bold">NOT CONFIGURED</span>
-                            )
-                        ) : (
-                            <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold">PRO</span>
-                        )}
-                    </div>
-                    <CardDescription>
-                        Use AI to explain update test results in plain language.
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    {window.sbwpData.isPro ? (
-                        <>
-                            {aiSettings?.is_configured ? (
-                                <div className="flex items-center justify-between p-3 bg-slate-50 rounded-md">
-                                    <div>
-                                        <div className="text-sm font-medium">OpenAI API Key</div>
-                                        <div className="text-xs text-muted-foreground font-mono">{aiSettings.masked_key}</div>
+                    {/* Schedules */}
+                    <Card className={!isPro ? "opacity-60" : ""}>
+                        <CardHeader className="pb-4">
+                            <div className="flex items-center justify-between">
+                                <CardTitle className="text-base flex items-center gap-2">
+                                    <Calendar className="h-4 w-4" />
+                                    Schedules
+                                </CardTitle>
+                                {!isPro && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">PRO</span>}
+                            </div>
+                            <CardDescription>
+                                Automated daily or weekly backups.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <Button
+                                variant={isPro ? "outline" : "secondary"}
+                                size="sm"
+                                className="w-full"
+                                onClick={() => isPro && onNavigate('schedules')}
+                                disabled={!isPro}
+                            >
+                                {isPro ? 'Manage Schedules' : 'Requires Pro'}
+                            </Button>
+                        </CardContent>
+                    </Card>
+
+                    {/* AI Assistant */}
+                    <Card className={isPro ? (aiSettings?.is_configured ? "ring-1 ring-violet-500/20 bg-violet-500/5" : "") : "opacity-60"}>
+                        <CardHeader className="pb-4">
+                            <div className="flex items-center justify-between">
+                                <CardTitle className="text-base flex items-center gap-2">
+                                    <Sparkles className="h-4 w-4 text-violet-500" />
+                                    AI Assistant
+                                </CardTitle>
+                                {!isPro && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">PRO</span>}
+                                {isPro && aiSettings?.is_configured && (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-600">ACTIVE</span>
+                                )}
+                            </div>
+                            <CardDescription>
+                                AI-powered crash analysis and explanations.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            {isPro ? (
+                                aiSettings?.is_configured ? (
+                                    <div className="flex items-center justify-between p-2.5 bg-muted/50 rounded-md border">
+                                        <span className="font-mono text-xs text-muted-foreground">{aiSettings.masked_key}</span>
+                                        <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={handleRemoveAIKey}>
+                                            <X className="h-3.5 w-3.5" />
+                                        </Button>
                                     </div>
-                                    <Button
-                                        size="sm"
-                                        variant="ghost"
-                                        className="text-red-500 hover:text-red-600 hover:bg-red-50"
-                                        onClick={handleRemoveAIKey}
-                                        disabled={savingAI}
-                                    >
-                                        {savingAI ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
-                                    </Button>
-                                </div>
-                            ) : (
-                                <div className="space-y-2">
-                                    <Label htmlFor="openai-key">OpenAI API Key</Label>
-                                    <div className="flex gap-2">
+                                ) : (
+                                    <div className="space-y-2">
                                         <Input
-                                            id="openai-key"
                                             type="password"
+                                            className="font-mono text-xs"
                                             placeholder="sk-..."
                                             value={aiKeyInput}
                                             onChange={e => setAiKeyInput(e.target.value)}
                                         />
-                                        <Button onClick={handleSaveAIKey} disabled={savingAI || !aiKeyInput}>
-                                            {savingAI ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}
-                                        </Button>
+                                        <p className="text-[10px] text-muted-foreground text-right">
+                                            Enter your OpenAI API Key
+                                        </p>
                                     </div>
-                                    <p className="text-xs text-muted-foreground">
-                                        Get your API key from <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-violet-500 hover:underline">platform.openai.com</a>
-                                    </p>
-                                </div>
+                                )
+                            ) : (
+                                <Button variant="secondary" size="sm" className="w-full" disabled>
+                                    Requires Pro
+                                </Button>
                             )}
-                        </>
-                    ) : (
-                        <p className="text-sm text-muted-foreground">
-                            Upgrade to Pro to use AI-powered features like plain-language update reports.
-                        </p>
-                    )}
-                </CardContent>
-            </Card>
+                        </CardContent>
+                    </Card>
+                </div>
+            </section>
 
-            {/* Recovery Portal Settings */}
-            <Card className="border-orange-500/50 bg-orange-500/5">
-                <CardHeader>
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                            <Shield className="h-5 w-5 text-orange-500" />
-                            <CardTitle>Recovery Portal</CardTitle>
-                        </div>
-                        {recoverySettings?.has_pin && (
-                            <span className="text-[10px] bg-emerald-500/20 text-emerald-500 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
-                                <Key className="h-3 w-3" /> PIN PROTECTED
-                            </span>
-                        )}
-                    </div>
-                    <CardDescription>
-                        Access this URL to recover your site if WordPress crashes.
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    {/* Recovery URL */}
-                    <div className="space-y-2">
-                        <Label>Recovery URL</Label>
-                        <div className="flex gap-2">
-                            <Input
-                                value={recoverySettings?.url || ''}
-                                readOnly
-                                className="font-mono text-xs bg-slate-50"
-                            />
-                            <Button variant="outline" size="icon" onClick={handleCopyUrl}>
-                                {copied ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
-                            </Button>
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                            Save this URL somewhere safe! It works even when WordPress is broken.
-                        </p>
-                    </div>
-
-                    {/* PIN Management */}
-                    <div className="space-y-2 pt-2 border-t">
-                        <Label>{recoverySettings?.has_pin ? 'Change or Remove PIN' : 'Set Optional PIN'}</Label>
-                        <div className="flex gap-2">
-                            <Input
-                                type="password"
-                                placeholder={recoverySettings?.has_pin ? "New PIN (or leave empty to remove)" : "Enter a PIN (optional)"}
-                                value={pinInput}
-                                onChange={e => setPinInput(e.target.value)}
-                            />
-                            <Button onClick={handleSavePin} disabled={savingRecovery} variant={recoverySettings?.has_pin && !pinInput ? "destructive" : "default"}>
-                                {savingRecovery ? <Loader2 className="h-4 w-4 animate-spin" /> : (recoverySettings?.has_pin && !pinInput ? 'Remove' : 'Save')}
-                            </Button>
-                        </div>
-                    </div>
-
-                    {/* Regenerate Key */}
-                    <div className="pt-2 border-t">
-                        <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={handleRegenerateKey} disabled={savingRecovery}>
-                            <RefreshCw className="h-3 w-3 mr-2" />
-                            Regenerate Recovery Key
-                        </Button>
-                    </div>
-                </CardContent>
-            </Card>
+            {/* Floating Save Button */}
+            <div className="fixed bottom-6 right-6 z-50">
+                <Button
+                    size="lg"
+                    onClick={handleSaveAll}
+                    disabled={saving}
+                    className="shadow-xl rounded-full px-6 hover:scale-105 transition-transform"
+                >
+                    {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    <Save className="mr-2 h-4 w-4" />
+                    Save Changes
+                </Button>
+            </div>
         </div>
     )
-
 }
