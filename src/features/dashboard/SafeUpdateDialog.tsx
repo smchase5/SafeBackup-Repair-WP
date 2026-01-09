@@ -161,7 +161,7 @@ export function SafeUpdateDialog({ open, onOpenChange }: SafeUpdateDialogProps) 
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[550px] max-h-[85vh] overflow-y-auto">
+            <DialogContent className="sm:max-w-[550px] max-h-[80vh] flex flex-col overflow-hidden">
                 <DialogHeader>
                     <DialogTitle>Safe Update Tester</DialogTitle>
                     <DialogDescription>
@@ -169,7 +169,7 @@ export function SafeUpdateDialog({ open, onOpenChange }: SafeUpdateDialogProps) 
                     </DialogDescription>
                 </DialogHeader>
 
-                <div className="py-4 space-y-4">
+                <div className="py-4 space-y-4 flex-1 overflow-y-auto">
                     {/* Loading State */}
                     {status === 'loading' && (
                         <div className="flex flex-col items-center justify-center py-8 gap-3">
